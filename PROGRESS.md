@@ -3,15 +3,15 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 01 (foundation) 🟨
-- Current milestone: M1 project skeleton
+- Phase: 02 (domain core) ⬜, next up
+- Current milestone: none (Phase 02 M1 types + price is next)
 - Blockers: none. Q2 (account facts) needed before Phase 03
 
 ## Phases
 | # | Phase | Status | Notes |
 |---|---|---|---|
 | 00 | Kickoff and board review | ✅ | Spec reviewed, MetaApi facts verified, ADR-0004 to 0007. Owner delegated Q1, Q3 to Q5 to Claude |
-| 01 | Foundation | 🟨 | |
+| 01 | Foundation | ✅ | 81 tests, clean clone passes `pnpm verify`, E2E on 390×844, CI workflow |
 | 02 | Domain core | ⬜ | Rules R0.1, R0.2, R3.6, R4.5, R4.6, R6.5, R8.3, §9 added |
 | 03 | Broker adapter | ⬜ | Must test the [T] items in 03-TRADING-RULES on demo |
 | 04 | Execution engine | ⬜ | Limiter is credit-based (09) |
@@ -36,6 +36,10 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - 2026-11-21 (owner delegated): Q4 caps 100 orders / 5 lots / 2% risk per action; adaptive spread guard ON (3× rolling median, R9.4b)
 - 2026-11-21 (owner delegated): Q5 one always-on Node service on Railway/Fly holding the stream (ADR-0007)
 - 2026-11-21: TypeScript pinned to 6.0.x: typescript-eslint 8.73 supports < 6.1, so TS 7 waits
+- 2026-11-21: Stack versions: Next 16.4, React 19.3, ESLint 10, Vitest 5, Zod 4.6, Pino 10, Tailwind 4.3, Playwright 1.63 (matches the preinstalled browser)
+- 2026-11-21: Architecture boundaries are lint rules with their own tests (eslint/boundaries.ts)
+- 2026-11-21: Logger scrubs actual secret values, not just secret key names
+- 2026-11-21: Bad env exits the process with code 1 at boot (Next would otherwise serve 500s forever)
 
 ## Open questions for the owner
 - **Q2** (needed by Phase 03) Is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet? R0.2 detects netting at runtime anyway.
