@@ -41,7 +41,7 @@ For price X and position p:
   everything at the same instant: on a rising market sells reach X (ask = X) one spread before buys (bid = X), and on a falling
   market the reverse. A spread spike can trigger one side and not the other. The preview must say this in plain words whenever the
   plan contains both buys and sells, e.g. "Sells close when ASK hits 1.09000, buys when BID hits it. Spread now 0.8 pts."
-  Default mode is `raw` (exactly X on both sides). Optional `spreadAligned` mode (owner decision pending, PROGRESS Q1)
+  v1 mode is `raw` (exactly X on both sides). v1.1 adds an opt-in `spreadAligned` mode that
   shifts sell levels by the current spread so both sides trigger at roughly bid = X; it must show the shifted price and
   warn that spread changes after setting are not tracked.
 
@@ -105,6 +105,11 @@ At execute time, re-read the quote. If any item's validity flipped since preview
   - Matching is always on `magic`. Comments can be truncated or rewritten by the broker; magic is a number set once at entry.
 - R9.2 Risk to SL per order = |entry − SL| / tickSize × tickValue × lots. Verify MetaApi/MT5 field names for tick value. Never guess.
 - R9.3 Margin check uses the broker's margin calculation if MetaApi exposes it; otherwise block with "can't verify margin" rather than estimate (owner may override per action in demo only).
-- R9.4 Spread guard compares (ask − bid) in points to the configured max at execute time, not preview time.
+- R9.4 Spread guard compares (ask − bid) in points at **execute** time, not preview time. Two checks; either one refuses the whole batch with zero broker calls:
+  - R9.4a **Absolute:** spread > `SPREAD_MAX_POINTS` (per symbol, optional, off by default).
+  - R9.4b **Adaptive (on by default):** spread > `SPREAD_GUARD_K` (default 3) × the **median** spread of streamed ticks over the last
+    `SPREAD_WINDOW_SEC` (default 300). It works on any symbol without per-symbol tuning (EURUSD and XAUUSD have very different normal spreads)
+    and catches news spikes. If fewer than 30 ticks are in the window, fall back to R9.4a; if that is off too, warn in the preview, don't block.
+  - The preview shows "spread now X pts, normal Y pts".
 - R9.5 Scaled ladder lots: flat = same; increasing/decreasing = linear from lotStart to lotEnd, each rounded down to volumeStep; total shown in preview.
 - R9.6 Preset firing always builds a fresh plan from live quote/spec; presets store recipes, never prices relative to a stale quote (unless absolute-price preset, flagged as such).

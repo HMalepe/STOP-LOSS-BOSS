@@ -3,15 +3,15 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 00 (kickoff) 🟨, review done, waiting on owner answers Q1 to Q5
-- Current milestone: M3 (questions) asked
-- Blockers: none for Phase 01 (Q1 to Q5 affect Phase 2 onward, not the skeleton)
+- Phase: 01 (foundation) 🟨
+- Current milestone: M1 project skeleton
+- Blockers: none. Q2 (account facts) needed before Phase 03
 
 ## Phases
 | # | Phase | Status | Notes |
 |---|---|---|---|
-| 00 | Kickoff and board review | 🟨 | Spec reviewed, MetaApi facts verified, ADR-0004 to 0007 written. Awaiting Q1 to Q5 |
-| 01 | Foundation | ⬜ | Can start now |
+| 00 | Kickoff and board review | ✅ | Spec reviewed, MetaApi facts verified, ADR-0004 to 0007. Owner delegated Q1, Q3 to Q5 to Claude |
+| 01 | Foundation | 🟨 | |
 | 02 | Domain core | ⬜ | Rules R0.1, R0.2, R3.6, R4.5, R4.6, R6.5, R8.3, §9 added |
 | 03 | Broker adapter | ⬜ | Must test the [T] items in 03-TRADING-RULES on demo |
 | 04 | Execution engine | ⬜ | Limiter is credit-based (09) |
@@ -19,7 +19,7 @@
 | 06 | API routes | ⬜ | |
 | 07 | UI | ⬜ | |
 | 08 | Order Desk (bulk orders, presets, ladders) | ⬜ | |
-| 09 | Realtime and performance | ⬜ | May move earlier (ADR-0007) |
+| 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
 | 10 | Hardening and go-live | ⬜ | |
 
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
@@ -31,13 +31,14 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - 2026-11-21: R5.3 rewritten: entry stops validated against the closing side (buy → bid, sell → ask)
 - 2026-11-21: Entry timeouts reconcile before retry, never blind-retry (R6.5)
 - 2026-11-21: Spec-load failure refuses the plan, no d = 0 fallback (R0.1)
+- 2026-11-21 (owner delegated): Q1 raw X in v1, spreadAligned opt-in v1.1 (ADR-0004)
+- 2026-11-21 (owner delegated): Q3 release slices accepted (ADR-0006)
+- 2026-11-21 (owner delegated): Q4 caps 100 orders / 5 lots / 2% risk per action; adaptive spread guard ON (3× rolling median, R9.4b)
+- 2026-11-21 (owner delegated): Q5 one always-on Node service on Railway/Fly holding the stream (ADR-0007)
+- 2026-11-21: TypeScript pinned to 6.0.x: typescript-eslint 8.73 supports < 6.1, so TS 7 waits
 
 ## Open questions for the owner
-- **Q1** Close-at mode: raw X only (rec.), or also a `spreadAligned` toggle? (ADR-0004)
-- **Q2** Account: is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet?
-- **Q3** Ship in slices: v1 core on demo first, Order Desk second, live last? (rec. yes, ADR-0006)
-- **Q4** Caps defaults: 100 orders/action, 5 lots/action, 2% equity risk/action, spread guard off? (rec. yes)
-- **Q5** Hosting: one always-on service on Railway/Fly (rec.) or Vercel + separate worker later? (ADR-0007)
+- **Q2** (needed by Phase 03) Is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet? R0.2 detects netting at runtime anyway.
 
 ## Unverified facts (must be tested on Exness demo via MetaApi, Phase 3)
 - POSITION_MODIFY behaviour when one level is omitted (docs silent)

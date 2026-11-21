@@ -1,5 +1,5 @@
 # ADR-0007: Reads come from the stream; consider one always-on service from day one
-**Status:** streaming reads accepted; single-service hosting proposed, owner to confirm (PROGRESS Q5)
+**Status:** accepted 2026-11-21 (both parts). Supersedes the hosting part of ADR-0003.
 **Context:** Verified MetaApi limits: 5,000 credits per account per 10 s, a trade costs 10 credits, streaming terminal state costs 0.
 A 1,000-position close needs ~10,000 credits for the trades alone, which is already over one 10 s window. Every REST read of positions or
 quotes during a batch takes credits from the trades. ADR-0003 deferred the warm streaming worker to Phase 9, so Phases 4 to 8 would

@@ -1,5 +1,5 @@
 # ADR-0004: Close-at-price is honest about bid/ask timing
-**Status:** accepted (default `raw`); `spreadAligned` mode proposed, owner decision pending (PROGRESS Q1)
+**Status:** accepted 2026-11-21. `raw` ships in v1; `spreadAligned` is deferred to v1.1 as an opt-in toggle.
 **Context:** One trigger price X goes onto buys and sells. Buy SL/TP trigger when **bid** reaches X; sell SL/TP trigger when **ask**
 reaches X. With a 1-point spread, sells on a rising market close one spread before buys. On news, spreads can widen 10 to 50×, so one
 side can be stopped out while the other never triggers. The owner reads "close all at X" as "flat at X", and that isn't what happens.

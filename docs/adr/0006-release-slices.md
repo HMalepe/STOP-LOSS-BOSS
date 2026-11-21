@@ -1,5 +1,5 @@
 # ADR-0006: Ship in three slices; LIVE only at the end
-**Status:** proposed, owner to confirm (PROGRESS Q3)
+**Status:** accepted 2026-11-21
 **Context:** 10 phases is a long road before the owner gets anything usable. The money-saving core (bulk SL/TP, close at price, close now)
 is ~40% of the work; ladders, presets, risk preview and the worker are the rest.
 **Decision:** v1 "Usable" = F1, F2, F3, F4a, F6, F7 on mock and demo (Phases 1 to 7 with a thin UI). v1.1 "Order Desk" = ladders, presets,
