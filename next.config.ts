@@ -13,9 +13,7 @@ const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   typedRoutes: true,
-  async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
-  },
+  headers: () => Promise.resolve([{ source: "/:path*", headers: securityHeaders }]),
 };
 
 export default config;

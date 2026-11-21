@@ -1,0 +1,8 @@
+*.md
+reference/
+pnpm-lock.yaml
+.next/
+coverage/
+playwright-report/
+test-results/
+.claude/
