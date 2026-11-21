@@ -8,7 +8,12 @@ Facts marked **[T]** must be tested on an Exness demo account through MetaApi in
 - **Buy** closes at **bid**. **Sell** closes at **ask**. So `ref(pos) = isBuy ? bid : ask`.
 - `point` = symbol point size. `digits` = decimal places. `stopsLevel` (points) = min distance from ref for SL/TP. `freezeLevel` (points) = distance inside which modifications are refused.
 - `d = max(stopsLevel, freezeLevel) * point` (+ configurable safety buffer, default 2 points).
-- All prices are rounded to `digits` with `roundToTick` **before** validation. Compare in integer points: `toPoints(p) = Math.round(p / point)`.
+  [V] MQL5 measures a buy's SL/TP distance from **Bid** and a sell's from **Ask**, and states the limit as `distance >= level`.
+  We use strict `<`/`>` plus the buffer, which is deliberately stricter. A stops level of 0 means "no minimum" [V]; the buffer still applies.
+- `tickSize` = minimal price change (`SYMBOL_TRADE_TICK_SIZE`). Usually equals `point` on FX; can be larger on indices/metals.
+  All prices are rounded to the nearest tick with `roundToTick` **before** validation, then to `digits`.
+  Compare in integer points: `toPoints(p) = Math.round(p / point)`. All rule math is integer points; prices are only converted at the edges.
+  (Rounding to tick is stricter than MQL5's examples, which normalise to digits only; it can never produce a price the server rejects for tick alignment.)
 - R0.1 **No spec, no plan.** If the symbol spec (point, digits, stopsLevel, freezeLevel, volume limits) can't be loaded, refuse the plan with `BROKER_UNAVAILABLE`. Never fall back to `d = 0` or any default. (The v1 prototype did this; it is a bug.)
 - R0.2 **Hedging accounts only for multi-position features.** On a netting account, N entries collapse into one position and every "batch" rule becomes meaningless. At connect, read the account's margin mode [T: confirm MetaApi field name]; if not hedging, disable entries/ladders and show why. Modify/close/trigger still work.
 
@@ -23,10 +28,16 @@ Position matches if symbol equals AND (side = ALL or matches) AND (magic matches
 - R2.4 Sell TP valid ⇔ `tp < ref − d`
 - R2.5 If both SL and TP are given for a buy: `sl < tp`; for a sell: `sl > tp` (implied by the above, assert anyway).
 - R2.6 A plan is valid only if every item is valid. Errors are grouped per side with the boundary price, e.g. "Sell SL must be above 1.08670".
-- R2.7 **Preserve:** the modify request always carries both levels: new value if set, else the position's current value, else omitted.
+- R2.7 **Preserve:** the modify request always carries both levels: new value if set, else the position's current value, else "none" (domain: `null`; the broker adapter decides the wire format after the [T] test).
+  [V] In a raw `MqlTradeRequest` an unset `sl`/`tp` is 0, and 0 means *remove the level*: that is the mechanism behind the wipe risk.
   [V] MQL5 lists both `sl` and `tp` as required fields for `TRADE_ACTION_SLTP`. [V] MetaApi marks both optional on `POSITION_MODIFY`
   and does **not** document what an omitted field does. So: always send both, and MockBroker must model the worst case
   (an omitted level gets wiped) so a missing field fails tests. [T] Confirm real omission behaviour on demo and record it in ADR-0002.
+- R2.9 **Frozen position (skip).** [V] MQL5 forbids modifying a position whose SL or TP is within `freezeLevel` points of its activation
+  price (buy: Bid, sell: Ask). The docs don't say whether that means the existing or the new level, so both are checked: new levels via `d`
+  (R2.1 to R2.4), and any **existing** SL/TP within `freezeLevel × point` of ref (≤, inclusive) makes the item a skip with reason
+  "frozen: TP 1.08650 is within the freeze level". Not a plan error: the position is about to close on its own. [T] confirm on demo.
+- R2.10 **Item order** for modify plans: positions with no SL first (most exposed), then largest floating loss first, then id (deterministic).
 - R2.8 No-op skip: if the new level equals the current level (in points), skip the item and report "unchanged", with no broker call.
   If the broker still answers `TRADE_RETCODE_NO_CHANGES` (10025) it counts as success [V: MetaApi lists 10025 as a success code].
 
@@ -93,7 +104,8 @@ At execute time, re-read the quote. If any item's validity flipped since preview
 
 ## §8 Break-even helpers (F5)
 - R8.1 BE: `sl = openPrice + (isBuy ? +N : −N) * point`; must pass R2.1/R2.3; else skip with reason "not far enough in profit".
-- R8.2 Lock: `sl = ref − N*point` (buy) / `ref + N*point` (sell); only in-profit positions; must pass §2.
+- R8.2 Lock: `sl = ref − N*point` (buy) / `ref + N*point` (sell); only in-profit positions (others skipped "not in profit").
+  If N doesn't clear §2 the plan is invalid (R2.6): it fails the same way for every position on that side, so it's a parameter error, not a per-position skip.
 - R8.3 Neither helper may move an existing SL to a worse level (further from price). If it would, skip with "SL already better".
 
 ## §9 Order Desk (batch identity, risk, guards)

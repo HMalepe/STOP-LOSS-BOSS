@@ -5,6 +5,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 import { boundaries } from "./eslint/boundaries";
+import { orderDeskPlugin } from "./eslint/rules/no-raw-price-compare";
 
 export default defineConfig(
   {
@@ -51,6 +52,13 @@ export default defineConfig(
   },
   { ...reactHooks.configs.flat.recommended, files: ["src/app/**/*.{ts,tsx}", "src/ui/**/*.{ts,tsx}"] },
   boundaries,
+  {
+    name: "order-desk/no-raw-price-compare",
+    files: ["src/**/*.{ts,tsx}", "worker/**/*.ts"],
+    ignores: ["src/domain/price.ts"],
+    plugins: { "order-desk": orderDeskPlugin },
+    rules: { "order-desk/no-raw-price-compare": "error" },
+  },
   {
     files: ["tests/**/*.ts"],
     rules: { "@typescript-eslint/no-non-null-assertion": "off" },
