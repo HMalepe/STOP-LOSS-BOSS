@@ -39,6 +39,7 @@ export default defineConfig(
       "@typescript-eslint/no-import-type-side-effects": "error",
     },
   },
+  { files: ["**/*.{js,mjs,cjs}"], extends: [tseslint.configs.disableTypeChecked] },
   {
     files: ["src/app/**/*.{ts,tsx}", "src/ui/**/*.{ts,tsx}"],
     plugins: { "@next/next": nextPlugin },

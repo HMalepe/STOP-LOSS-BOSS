@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens from docs/07-UI-SPEC.md. Dark trading-terminal, high contrast, one-thumb.
+ * Every colour/size used in the UI comes from here; components never hard-code hex values.
+ */
+@theme {
+  --color-bg: #0b0f14;
+  --color-card: #141a22;
+  --color-line: #232c38;
+  --color-text: #e6edf3;
+  --color-muted: #8b98a8;
+  --color-accent: #38bdf8;
+  --color-profit: #22c55e;
+  --color-loss: #ef4444;
+  --color-warn: #f59e0b;
+  --color-mock: #64748b;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* 48px minimum tap target (07-UI-SPEC). Use h-tap / min-h-tap on anything tappable. */
+  --spacing-tap: 3rem;
+  --spacing-gutter: 1rem;
+
+  --radius-card: 0.875rem;
+
+  --animate-live-pulse: live-pulse 1.4s ease-in-out infinite;
+  @keyframes live-pulse {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.35;
+      transform: scale(0.8);
+    }
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+    min-height: 100dvh;
+    overscroll-behavior-y: none;
+  }
+
+  /* Numbers never jitter while prices tick. */
+  .num {
+    @apply font-mono tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

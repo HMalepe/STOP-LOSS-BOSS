@@ -37,7 +37,9 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "tests/**/*.ts",
+    "tests/**/*.tsx",
     "worker/**/*.ts",
+    "eslint/**/*.ts",
     "*.config.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
