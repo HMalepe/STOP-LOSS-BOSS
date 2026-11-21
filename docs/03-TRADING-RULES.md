@@ -113,6 +113,9 @@ At execute time, re-read the quote. If any item's validity flipped since preview
 - R8.2 Lock: `sl = ref − N*point` (buy) / `ref + N*point` (sell); only in-profit positions (others skipped "not in profit").
   If N doesn't clear §2 the plan is invalid (R2.6): it fails the same way for every position on that side, so it's a parameter error, not a per-position skip.
 - R8.3 Neither helper may move an existing SL to a worse level (further from price). If it would, skip with "SL already better".
+- R8.4 **Tick rounding never gives less than asked.** Break-even rounds toward profit (buy up, sell down), so it locks at least BE + N.
+  Lock rounds away from price (buy down, sell up), so the stop is at least N points away. Only matters when tickSize > point.
+- R8.5 Parameters: break-even offset N is an integer ≥ 0 (0 = exact entry price); lock distance N is an integer ≥ 1. Both exclude swaps and commission.
 
 ## §9 Order Desk (batch identity, risk, guards)
 - R9.1 **Batch identity (ADR-0005).** Every order from a batch carries:

@@ -5,6 +5,7 @@
  */
 import { decideCloseAt } from "./closeAt";
 import { compareIds, duplicateIds, matchesOrder, matchesPosition } from "./filter";
+import { decideBreakeven, decideLock, type HelperDecision } from "./helpers";
 import { formatPrice, fromPoints, roundToTickPoints, specProblems } from "./price";
 import {
   decideModify,
@@ -15,7 +16,6 @@ import {
   type LevelChange,
   type LevelKind,
   type Market,
-  type ModifyDecision,
 } from "./rules";
 import type {
   PendingOrder,
@@ -38,7 +38,9 @@ export type PlanRequest =
       readonly takeProfit?: number;
     }
   | { readonly action: "closeAt"; readonly filter: PositionFilter; readonly price: number }
-  | { readonly action: "close"; readonly filter: PositionFilter; readonly cancelPending: boolean };
+  | { readonly action: "close"; readonly filter: PositionFilter; readonly cancelPending: boolean }
+  | { readonly action: "breakeven"; readonly filter: PositionFilter; readonly offsetPoints: number }
+  | { readonly action: "lock"; readonly filter: PositionFilter; readonly distancePoints: number };
 
 export type PlanAction = PlanRequest["action"];
 
@@ -124,6 +126,14 @@ function validRequest(req: PlanRequest): string | null {
       return positive(req.price) ? null : "Enter a valid trigger price.";
     case "close":
       return null;
+    case "breakeven":
+      return Number.isSafeInteger(req.offsetPoints) && req.offsetPoints >= 0
+        ? null
+        : "Break-even offset must be a whole number of points, 0 or more.";
+    case "lock":
+      return Number.isSafeInteger(req.distancePoints) && req.distancePoints >= 1
+        ? null
+        : "Lock distance must be a whole number of points, 1 or more.";
   }
 }
 
@@ -180,13 +190,20 @@ interface Accumulated {
   readonly violations: Map<string, PlanViolation>;
 }
 
-function skipReason(d: Extract<ModifyDecision, { kind: "skip" }>, m: Market): string {
+const HELPER_SKIP: Record<"R8.1" | "R8.2" | "R8.3", string> = {
+  "R8.1": "not far enough in profit",
+  "R8.2": "not in profit",
+  "R8.3": "SL already better",
+};
+
+function skipReason(d: Extract<HelperDecision, { kind: "skip" }>, m: Market): string {
   if (d.rule === "R2.8") return "unchanged";
+  if (d.rule !== "R2.9") return HELPER_SKIP[d.rule];
   const at = formatPrice(fromPoints(d.frozen.at, m.spec), m.spec);
   return `frozen: ${d.frozen.level} ${at} is within the freeze level (${String(m.freeze)} points)`;
 }
 
-function record(acc: Accumulated, pos: Position, d: ModifyDecision, m: Market): void {
+function record(acc: Accumulated, pos: Position, d: HelperDecision, m: Market): void {
   switch (d.kind) {
     case "modify":
       acc.items.push({
@@ -334,6 +351,37 @@ function buildCloseAt(
   };
 }
 
+function buildHelper(
+  req: Extract<PlanRequest, { action: "breakeven" | "lock" }>,
+  positions: readonly Position[],
+  m: Market,
+  time: number,
+): PlanResult {
+  const acc: Accumulated = { items: [], skipped: [], violations: new Map() };
+  for (const pos of [...positions].sort(byExposure)) {
+    const d =
+      req.action === "breakeven"
+        ? decideBreakeven(pos, req.offsetPoints, m)
+        : decideLock(pos, req.distancePoints, m);
+    record(acc, pos, d, m);
+  }
+  if (acc.violations.size > 0) return invalid(acc, m);
+  const warnings = ["Excludes swaps and commission. (R8.5)"];
+  if (acc.items.length === 0) warnings.push("Nothing to change: no matching position qualifies right now.");
+  return {
+    ok: true,
+    plan: {
+      action: req.action,
+      symbol: req.filter.symbol,
+      quote: quoteOut(m, time),
+      items: acc.items,
+      skipped: acc.skipped,
+      breakdown: sideCounts(acc.items),
+      warnings,
+    },
+  };
+}
+
 function buildClose(
   req: Extract<PlanRequest, { action: "close" }>,
   positions: readonly Position[],
@@ -402,5 +450,8 @@ export function buildPlan(req: PlanRequest, snap: MarketSnapshot, opts: PlanOpti
       return buildLevels(req, positions, loaded.m, loaded.time);
     case "closeAt":
       return buildCloseAt(req, positions, loaded.m, loaded.time);
+    case "breakeven":
+    case "lock":
+      return buildHelper(req, positions, loaded.m, loaded.time);
   }
 }
