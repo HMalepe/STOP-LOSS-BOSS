@@ -3,16 +3,16 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 02 (domain core) ⬜, next up
-- Current milestone: none (Phase 02 M1 types + price is next)
-- Blockers: none. Q2 (account facts) needed before Phase 03
+- Phase: 03 (broker adapter) ⬜, next up
+- Current milestone: none
+- Blockers: **Q2** (Exness demo connected to MetaApi) for the live [T] tests in Phase 03. MockBroker and adapter code can start without it
 
 ## Phases
 | # | Phase | Status | Notes |
 |---|---|---|---|
 | 00 | Kickoff and board review | ✅ | Spec reviewed, MetaApi facts verified, ADR-0004 to 0007. Owner delegated Q1, Q3 to Q5 to Claude |
 | 01 | Foundation | ✅ | 81 tests, clean clone passes `pnpm verify`, E2E on 390×844, CI workflow |
-| 02 | Domain core | ⬜ | Rules R0.1, R0.2, R3.6, R4.5, R4.6, R6.5, R8.3, §9 added |
+| 02 | Domain core | ✅ | 294 tests, domain 100% lines / 99% branches, fuzzed. Safety review: 1 critical + 1 high found and fixed |
 | 03 | Broker adapter | ⬜ | Must test the [T] items in 03-TRADING-RULES on demo |
 | 04 | Execution engine | ⬜ | Limiter is credit-based (09) |
 | 05 | Auth and security | ⬜ | |
@@ -40,6 +40,12 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - 2026-11-21: Architecture boundaries are lint rules with their own tests (eslint/boundaries.ts)
 - 2026-11-21: Logger scrubs actual secret values, not just secret key names
 - 2026-11-21: Bad env exits the process with code 1 at boot (Next would otherwise serve 500s forever)
+- 2026-11-21: All rule maths in integer points; lint rule bans comparing Price values outside price.ts
+- 2026-11-21: Freeze level checked on existing AND new levels (MQL5 docs ambiguous): R2.9 frozen = skip, not error
+- 2026-11-21: Close-now never blocked by spec/quote/bad data/duplicates (R4.7, R0.3, R0.5): it closes by ticket
+- 2026-11-21: Levels ≤ 0 points are plan errors (R0.4): 0 is "remove" on the MT5 wire
+- 2026-11-21: Helper rounding never gives less than asked (R8.4); lock never locks a loss (R8.6)
+- 2026-11-21: Deferred: R1.1 batch filter → Phase 08 with R9.1; stale-quote check → drift guard §7 (Phase 04/06)
 
 ## Open questions for the owner
 - **Q2** (needed by Phase 03) Is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet? R0.2 detects netting at runtime anyway.
@@ -51,3 +57,5 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - Field names for tick value / tick size; whether MetaApi exposes broker margin calc
 - Real trade latency (streaming vs REST), max in-flight trades, Exness stops/freeze levels, max open positions
 - Whether MetaApi deduplicates on `clientId` (would make R6.5 simpler)
+- Does MT5 re-check the preserved (unchanged) level against stopsLevel on TRADE_ACTION_SLTP? (R2.11: warn now, skip if yes)
+- Freeze level: existing levels, new levels, or both? (R2.9 assumes both)
