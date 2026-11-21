@@ -1,0 +1,7 @@
+{
+  "name": "sl-batch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Phone-first batch stop-loss tool over MetaApi",
+  "engines": { "node": ">=18" }
+}

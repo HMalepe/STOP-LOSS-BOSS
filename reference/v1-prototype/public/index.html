@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="/manifest.json">
+<title>SL Batch</title>
+<style>
+  :root { --bg:#0b0f14; --card:#141a22; --line:#232c38; --txt:#e8edf3; --mut:#8896a7; --ok:#22c55e; --bad:#ef4444; --acc:#38bdf8; --warn:#f59e0b; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0 auto; background:var(--bg); color:var(--txt); font:16px/1.4 system-ui,-apple-system,sans-serif; padding:16px; padding-bottom:calc(16px + env(safe-area-inset-bottom)); max-width:520px; }
+  h1 { font-size:20px; margin:4px 0 12px; } h2 { font-size:15px; margin:0 0 4px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  input, select, button { width:100%; font:inherit; border-radius:10px; border:1px solid var(--line); background:#0f141b; color:var(--txt); padding:14px; }
+  button { background:var(--acc); color:#04121c; font-weight:700; border:0; margin-top:10px; }
+  button.danger { background:var(--bad); color:#fff; } button.armed { background:#fff; color:var(--bad); animation:pulse .6s infinite alternate; }
+  button.ghost { background:transparent; color:var(--mut); border:1px solid var(--line); }
+  button:disabled { opacity:.5; }
+  @keyframes pulse { to { opacity:.7; } }
+  label { display:block; color:var(--mut); font-size:13px; margin:10px 0 4px; }
+  .row { display:flex; gap:10px; } .row > * { flex:1; min-width:0; }
+  .banner { padding:8px 12px; border-radius:10px; font-size:13px; font-weight:600; margin-bottom:12px; }
+  .demo { background:#3b2f06; color:#fbbf24; } .live { background:#3b0d0d; color:#fca5a5; }
+  .stat { font-size:28px; font-weight:800; } .mut { color:var(--mut); font-size:13px; }
+  .err { color:var(--bad); margin-top:8px; font-size:14px; }
+  .check { display:flex; gap:8px; align-items:center; margin-top:10px; color:var(--mut); font-size:14px; } .check input { width:auto; }
+  .confirm { margin-top:10px; padding:12px; border:1px solid var(--warn); border-radius:10px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; } td,th { padding:6px 4px; border-bottom:1px solid var(--line); text-align:left; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .hidden { display:none !important; }
+  .panic { border-color:#5b1a1a; }
+</style>
+</head>
+<body>
+<h1>SL Batch</h1>
+
+<div id="login" class="card">
+  <label>App password</label>
+  <input id="pw" type="password" autocomplete="current-password">
+  <button id="loginBtn">Unlock</button>
+  <div id="loginErr" class="err"></div>
+</div>
+
+<div id="app" class="hidden">
+  <div id="banner" class="banner"></div>
+
+  <!-- account strip -->
+  <div class="card">
+    <div class="row">
+      <div><div class="mut">Open positions</div><div class="stat" id="count">0</div></div>
+      <div><div class="mut">Floating P/L</div><div class="stat" id="pl">0</div></div>
+    </div>
+    <div class="mut" id="priceLine"></div>
+    <div class="row">
+      <div><label>Symbol</label><select id="symbol"></select></div>
+      <div><label>Side</label>
+        <select id="side"><option value="ALL">All</option><option value="BUY">Buys</option><option value="SELL">Sells</option></select>
+      </div>
+    </div>
+    <button id="refreshBtn" class="ghost">Refresh</button>
+  </div>
+
+  <!-- 1. close all at price -->
+  <div class="card">
+    <h2>Close all at price</h2>
+    <div class="mut">One price. Every position closes when it's hit. The broker holds it, so it fires even with your phone off.</div>
+    <label>Trigger price</label>
+    <input id="trigger" type="number" inputmode="decimal" step="any" placeholder="e.g. 1.09000">
+    <button id="triggerBtn">Preview</button>
+    <div id="triggerConfirm" class="confirm hidden">
+      <div id="triggerText"></div>
+      <button id="triggerGo" class="danger">Set trigger</button>
+      <button class="ghost" data-cancel="triggerConfirm">Cancel</button>
+    </div>
+    <div id="triggerErr" class="err"></div>
+  </div>
+
+  <!-- 2. SL / TP -->
+  <div class="card">
+    <h2>Set SL / TP on all</h2>
+    <div class="row">
+      <div><label>Stop loss</label><input id="sl" type="number" inputmode="decimal" step="any" placeholder="optional"></div>
+      <div><label>Take profit</label><input id="tp" type="number" inputmode="decimal" step="any" placeholder="optional"></div>
+    </div>
+    <button id="levelsBtn">Preview</button>
+    <div id="levelsConfirm" class="confirm hidden">
+      <div id="levelsText"></div>
+      <button id="levelsGo" class="danger">Apply</button>
+      <button class="ghost" data-cancel="levelsConfirm">Cancel</button>
+    </div>
+    <div id="levelsErr" class="err"></div>
+  </div>
+
+  <!-- 3. panic -->
+  <div class="card panic">
+    <h2>Close all now</h2>
+    <div class="mut">Market-closes every open position on the selected symbol immediately.</div>
+    <label class="check"><input type="checkbox" id="allSymbols"> All symbols, not just the selected one</label>
+    <label class="check"><input type="checkbox" id="cancelPending" checked> Also cancel pending orders</label>
+    <button id="closeBtn" class="danger">CLOSE ALL NOW</button>
+    <div id="closeErr" class="err"></div>
+  </div>
+
+  <div id="results" class="card hidden">
+    <div id="summary" style="font-weight:700;margin-bottom:8px"></div>
+    <table id="resTable"></table>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let key = ''; try { key = sessionStorage.getItem('k') || ''; } catch {}
+let data = null;
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'x-app-key': key, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  return j;
+}
+
+async function load() {
+  data = await api('/api/positions');
+  $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+  $('banner').textContent = data.demo ? 'DEMO MODE: no real orders' : 'LIVE: real money';
+  $('banner').className = 'banner ' + (data.demo ? 'demo' : 'live');
+  const syms = [...new Set(data.positions.map((p) => p.symbol))];
+  const cur = $('symbol').value;
+  $('symbol').innerHTML = syms.length ? syms.map((s) => `<option>${s}</option>`).join('') : '<option value="">(none)</option>';
+  if (syms.includes(cur)) $('symbol').value = cur;
+  refresh();
+}
+
+const isBuy = (p) => p.type === 'POSITION_TYPE_BUY';
+function selected() {
+  const s = $('symbol').value, side = $('side').value;
+  return data.positions.filter((p) => p.symbol === s && (side === 'ALL' || (side === 'BUY') === isBuy(p)));
+}
+function refresh() {
+  if (!data) return;
+  const sel = selected();
+  $('count').textContent = sel.length;
+  const pl = sel.reduce((a, p) => a + (p.profit || 0), 0);
+  $('pl').textContent = pl.toFixed(2); $('pl').className = 'stat ' + (pl >= 0 ? 'ok' : 'bad');
+  const px = data.prices[$('symbol').value];
+  $('priceLine').textContent = px ? `bid ${px.bid} / ask ${px.ask} · pending orders: ${(data.orders || []).length}` : '';
+}
+$('symbol').onchange = $('side').onchange = refresh;
+
+$('loginBtn').onclick = async () => {
+  key = $('pw').value; $('loginErr').textContent = '';
+  try { await load(); try { sessionStorage.setItem('k', key); } catch {} }
+  catch (e) { $('loginErr').textContent = e.message; }
+};
+$('refreshBtn').onclick = () => load().catch((e) => alertErr('closeErr', e));
+document.querySelectorAll('[data-cancel]').forEach((b) => b.onclick = () => $(b.dataset.cancel).classList.add('hidden'));
+
+function alertErr(id, e) { $(id).textContent = e.message; }
+function clearErrs() { ['triggerErr', 'levelsErr', 'closeErr'].forEach((i) => ($(i).textContent = '')); }
+
+function showResults(title, rows) {
+  $('summary').innerHTML = title;
+  $('resTable').innerHTML = '<tr><th>ID</th><th>Result</th></tr>' + rows.map((x) =>
+    `<tr><td>${x.id}</td><td class="${x.ok ? 'ok' : 'bad'}">${x.ok ? 'OK' : (x.message || 'failed')}</td></tr>`).join('');
+  $('results').classList.remove('hidden');
+  $('results').scrollIntoView({ behavior: 'smooth' });
+}
+const tally = (r) => `<span class="ok">${r.succeeded} done</span> · <span class="bad">${r.failed} failed</span> of ${r.total}`;
+
+// ---- generic preview -> confirm flow ----
+function flow({ btn, go, box, text, err, build, describe }) {
+  let pending = null;
+  $(btn).onclick = async () => {
+    clearErrs(); $('results').classList.add('hidden');
+    pending = build();
+    try {
+      const p = await api('/api/apply', { ...pending, dryRun: true });
+      $(text).innerHTML = describe(p);
+      $(box).classList.remove('hidden');
+    } catch (e) { alertErr(err, e); $(box).classList.add('hidden'); }
+  };
+  $(go).onclick = async () => {
+    $(go).disabled = true;
+    try {
+      const r = await api('/api/apply', pending);
+      showResults(tally(r), r.results);
+      $(box).classList.add('hidden');
+      await load();
+    } catch (e) { alertErr(err, e); }
+    $(go).disabled = false;
+  };
+}
+
+flow({
+  btn: 'triggerBtn', go: 'triggerGo', box: 'triggerConfirm', text: 'triggerText', err: 'triggerErr',
+  build: () => ({ mode: 'closeAt', symbol: $('symbol').value, side: $('side').value, price: $('trigger').value }),
+  describe: (p) => `<b>${p.count} ${p.symbol} positions</b> close at <b>${$('trigger').value}</b><br>
+    <span class="mut">${p.asTP} as take profit, ${p.asSL} as stop loss · ${p.buys} buys / ${p.sells} sells</span>`,
+});
+
+flow({
+  btn: 'levelsBtn', go: 'levelsGo', box: 'levelsConfirm', text: 'levelsText', err: 'levelsErr',
+  build: () => ({ mode: 'levels', symbol: $('symbol').value, side: $('side').value, stopLoss: $('sl').value, takeProfit: $('tp').value }),
+  describe: (p) => `<b>${p.count} ${p.symbol} positions</b><br>
+    ${$('sl').value ? 'SL → ' + $('sl').value + '<br>' : ''}${$('tp').value ? 'TP → ' + $('tp').value : ''}`,
+});
+
+// ---- panic: tap once to arm, tap again within 4s to fire ----
+let armTimer = null;
+$('closeBtn').onclick = async () => {
+  clearErrs();
+  const b = $('closeBtn');
+  const all = $('allSymbols').checked;
+  const n = all ? data.positions.length : data.positions.filter((p) => p.symbol === $('symbol').value).length;
+  if (!b.classList.contains('armed')) {
+    b.classList.add('armed'); b.textContent = `TAP AGAIN TO CLOSE ${n}`;
+    armTimer = setTimeout(disarm, 4000);
+    return;
+  }
+  clearTimeout(armTimer); b.disabled = true; b.textContent = 'Closing...';
+  try {
+    const r = await api('/api/close', {
+      symbol: all ? 'ALL' : $('symbol').value,
+      cancelPending: $('cancelPending').checked,
+      confirm: 'CLOSE',
+    });
+    showResults(`Positions: ${tally(r.positions)}<br>Pending orders: ${tally(r.orders)}`, [...r.positions.results, ...r.orders.results]);
+    await load();
+  } catch (e) { alertErr('closeErr', e); }
+  b.disabled = false; disarm();
+};
+function disarm() { const b = $('closeBtn'); b.classList.remove('armed'); b.textContent = 'CLOSE ALL NOW'; }
+
+if (key) load().catch(() => { try { sessionStorage.removeItem('k'); } catch {} });
+</script>
+</body>
+</html>
