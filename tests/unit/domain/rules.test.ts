@@ -253,8 +253,12 @@ describe("R2.8 no-op skip", () => {
 describe("R2.9 frozen positions are skipped", () => {
   it("existing TP exactly at the freeze distance → frozen (inclusive)", () => {
     const pos = position("BUY", { tp: price(108605) }); // |108605 − bid 108600| = 5 = freeze
-    expect(frozenLevel(pos, M)).toBe("TP");
-    expect(decideModify(pos, { sl: P(108000) }, M)).toEqual({ kind: "skip", rule: "R2.9", frozen: "TP" });
+    expect(frozenLevel(pos, M)).toEqual({ level: "TP", at: 108605 });
+    expect(decideModify(pos, { sl: P(108000) }, M)).toEqual({
+      kind: "skip",
+      rule: "R2.9",
+      frozen: { level: "TP", at: 108605 },
+    });
   });
 
   it("one point outside the freeze distance → not frozen", () => {
@@ -264,7 +268,7 @@ describe("R2.9 frozen positions are skipped", () => {
   });
 
   it("a sell's existing SL is measured from ASK", () => {
-    expect(frozenLevel(position("SELL", { sl: price(108615) }), M)).toBe("SL");
+    expect(frozenLevel(position("SELL", { sl: price(108615) }), M)).toEqual({ level: "SL", at: 108615 });
     expect(frozenLevel(position("SELL", { sl: price(108616) }), M)).toBeNull();
   });
 

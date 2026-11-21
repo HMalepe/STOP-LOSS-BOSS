@@ -108,7 +108,7 @@ describe("R3.3 only the assigned level changes", () => {
     expect(decideCloseAt(position("BUY", { sl: price(108596) }), P(109000), M)).toEqual({
       kind: "skip",
       rule: "R2.9",
-      frozen: "SL",
+      frozen: { level: "SL", at: 108596 },
       set: "TP",
     });
   });

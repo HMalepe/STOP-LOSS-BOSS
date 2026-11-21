@@ -17,6 +17,9 @@ Facts marked **[T]** must be tested on an Exness demo account through MetaApi in
 - R0.1 **No spec, no plan.** If the symbol spec (point, digits, stopsLevel, freezeLevel, volume limits) can't be loaded, refuse the plan with `BROKER_UNAVAILABLE`. Never fall back to `d = 0` or any default. (The v1 prototype did this; it is a bug.)
 - R0.2 **Hedging accounts only for multi-position features.** On a netting account, N entries collapse into one position and every "batch" rule becomes meaningless. At connect, read the account's margin mode [T: confirm MetaApi field name]; if not hedging, disable entries/ladders and show why. Modify/close/trigger still work.
 
+- R0.3 **Unique tickets.** If a snapshot contains the same position id (or order id) twice, the broker data is corrupt: refuse the plan
+  with `BROKER_UNAVAILABLE`, for every action including close-now. Otherwise one ticket could be modified or closed twice.
+
 ## §1 Filters
 Position matches if symbol equals AND (side = ALL or matches) AND (magic matches if given) AND (inProfitOnly → profit > 0).
 - R1.1 `batch` filter (Order Desk): matches if the position's magic decodes to the given batch id (see R9.1).
@@ -62,7 +65,10 @@ For price X and position p:
 - R4.3 Optional cancel pending orders of the same filter after positions.
 - R4.4 Retry retryable failures per §6.
 - R4.5 `TRADE_RETCODE_POSITION_CLOSED` (10036) or "position not found" → success, reported as "already closed".
-- R4.6 Order: positions with the largest absolute floating loss first (most money at risk), then the rest.
+- R4.6 Order: positions with the largest absolute floating loss first (most money at risk), then the rest (profit ascending, then id).
+- R4.7 **Close now never depends on spec or quote.** It closes by ticket at market, so a missing or broken spec/quote must not block the
+  panic button (R0.1 does not apply here). The plan still shows the quote when one is available.
+- R4.8 Cancel-pending (R4.3) uses the same symbol, side (BUY_* orders are buys) and magic filter; `inProfitOnly` doesn't apply to orders.
 
 ## §5 Bulk orders (R5.x)
 - R5.1 Volume: `volumeMin ≤ v ≤ volumeMax`, rounded DOWN to `volumeStep`. Reject if rounding changes it by more than a step; show the effective lot.

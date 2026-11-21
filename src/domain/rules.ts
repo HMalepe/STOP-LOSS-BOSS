@@ -131,8 +131,13 @@ export function effectiveChange(pos: Position, change: LevelChange, m: Market): 
   };
 }
 
+export interface FrozenLevel {
+  readonly level: LevelKind;
+  readonly at: Points;
+}
+
 /** R2.9: an existing level within the freeze distance of price makes the position unmodifiable. */
-export function frozenLevel(pos: Position, m: Market): LevelKind | null {
+export function frozenLevel(pos: Position, m: Market): FrozenLevel | null {
   if (m.freeze === 0) return null;
   const r = ref(pos.side, m);
   for (const [kind, value] of [
@@ -140,14 +145,15 @@ export function frozenLevel(pos: Position, m: Market): LevelKind | null {
     ["TP", pos.tp],
   ] as const) {
     const p = currentPoints(value, m);
-    if (p !== null && Math.abs(p - r) <= m.freeze) return kind;
+    if (p !== null && Math.abs(p - r) <= m.freeze) return { level: kind, at: p };
   }
   return null;
 }
 
 export type ModifyDecision =
   | { readonly kind: "modify"; readonly sl: Points | null; readonly tp: Points | null }
-  | { readonly kind: "skip"; readonly rule: "R2.8" | "R2.9"; readonly frozen?: LevelKind }
+  | { readonly kind: "skip"; readonly rule: "R2.8" }
+  | { readonly kind: "skip"; readonly rule: "R2.9"; readonly frozen: FrozenLevel }
   | { readonly kind: "invalid"; readonly violations: readonly LevelViolation[] };
 
 /**
