@@ -58,7 +58,7 @@ export function ref(side: Side, m: Market): Points {
 export type LevelKind = "SL" | "TP";
 
 export interface LevelViolation {
-  readonly rule: "R2.1" | "R2.2" | "R2.3" | "R2.4";
+  readonly rule: "R0.4" | "R2.1" | "R2.2" | "R2.3" | "R2.4";
   readonly side: Side;
   readonly level: LevelKind;
   /** The level must be strictly beyond this, in the direction of `relation`. */
@@ -66,8 +66,10 @@ export interface LevelViolation {
   readonly relation: "below" | "above";
 }
 
-/** R2.1 to R2.4 for one level. null = valid. */
+/** R0.4 and R2.1 to R2.4 for one level. null = valid. */
 export function checkLevel(side: Side, level: LevelKind, value: Points, m: Market): LevelViolation | null {
+  // R0.4: 0 means "remove the level" on the MT5 wire. Never emit it, never go below it.
+  if (value <= 0) return { rule: "R0.4", side, level, boundary: points(0), relation: "above" };
   const r = ref(side, m);
   const below = points(r - m.d);
   const above = points(r + m.d);
@@ -151,7 +153,13 @@ export function frozenLevel(pos: Position, m: Market): FrozenLevel | null {
 }
 
 export type ModifyDecision =
-  | { readonly kind: "modify"; readonly sl: Points | null; readonly tp: Points | null }
+  | {
+      readonly kind: "modify";
+      readonly sl: Points | null;
+      readonly tp: Points | null;
+      /** R2.11: an untouched existing level that sits inside d. The broker may reject the item. */
+      readonly preservedInsideD?: LevelKind;
+    }
   | { readonly kind: "skip"; readonly rule: "R2.8" }
   | { readonly kind: "skip"; readonly rule: "R2.9"; readonly frozen: FrozenLevel }
   | { readonly kind: "invalid"; readonly violations: readonly LevelViolation[] };
@@ -171,5 +179,23 @@ export function decideModify(pos: Position, change: LevelChange, m: Market): Mod
   const frozen = frozenLevel(pos, m);
   if (frozen !== null) return { kind: "skip", rule: "R2.9", frozen };
 
-  return { kind: "modify", ...mergeLevels(pos, eff, m) };
+  const merged = mergeLevels(pos, eff, m);
+  invariant(
+    (merged.sl === null || merged.sl > 0) && (merged.tp === null || merged.tp > 0),
+    `R0.4 modify for ${pos.id} would carry a level ≤ 0`,
+  );
+  const preservedInsideD = preservedLevelInsideD(pos, eff, m);
+  return { kind: "modify", ...merged, ...(preservedInsideD === null ? {} : { preservedInsideD }) };
+}
+
+/** R2.11: which untouched existing level (if any) is inside the stop distance. */
+function preservedLevelInsideD(pos: Position, eff: LevelChange, m: Market): LevelKind | null {
+  for (const [kind, value, changed] of [
+    ["SL", pos.sl, eff.sl !== undefined],
+    ["TP", pos.tp, eff.tp !== undefined],
+  ] as const) {
+    const p = currentPoints(value, m);
+    if (!changed && p !== null && checkLevel(pos.side, kind, p, m) !== null) return kind;
+  }
+  return null;
 }

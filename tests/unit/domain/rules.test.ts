@@ -242,10 +242,12 @@ describe("R2.8 no-op skip", () => {
     // Existing SL 1.08590 is inside d (12) but outside freeze (5): fine to leave it, the user isn't moving it.
     const pos = position("BUY", { sl: 1.0859, tp: 1.09 });
     expect(effectiveChange(pos, { sl: P(108590), tp: P(109100) }, M)).toEqual({ tp: 109100 });
+    // …but R2.11 flags it: the kept SL is inside d, so the broker might still reject the item.
     expect(decideModify(pos, { sl: P(108590), tp: P(109100) }, M)).toEqual({
       kind: "modify",
       sl: 108590,
       tp: 109100,
+      preservedInsideD: "SL",
     });
   });
 });

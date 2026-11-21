@@ -6,7 +6,8 @@
 import { decideCloseAt } from "./closeAt";
 import { compareIds, duplicateIds, matchesOrder, matchesPosition } from "./filter";
 import { decideBreakeven, decideLock, type HelperDecision } from "./helpers";
-import { formatPrice, fromPoints, roundToTickPoints, specProblems } from "./price";
+import { orderProblems, positionGridProblems, positionProblems, uniqueById } from "./snapshot";
+import { formatPrice, fromPoints, representable, specProblems, tryRoundToTickPoints } from "./price";
 import {
   decideModify,
   DEFAULT_BUFFER_POINTS,
@@ -103,11 +104,16 @@ function byExposure(a: Position, b: Position): number {
   return byLoss(a, b);
 }
 
-/** R4.6 (close plans): biggest loser first, then id. */
+/** R4.6 (close plans): biggest loser first, then id. Unknown P/L (R0.5) counts as the biggest risk, so it goes first. */
 function byLoss(a: Position, b: Position): number {
-  if (a.profit !== b.profit) return a.profit - b.profit;
+  const pa = Number.isFinite(a.profit) ? a.profit : Number.NEGATIVE_INFINITY;
+  const pb = Number.isFinite(b.profit) ? b.profit : Number.NEGATIVE_INFINITY;
+  if (pa !== pb) return pa < pb ? -1 : 1;
   return compareIds(a.id, b.id);
 }
+
+/** R0.6 */
+export const MAX_POINTS_PARAM = 1_000_000;
 
 function quoteOut(m: Market, time: number): NonNullable<PlanDraft["quote"]> {
   return { bid: fromPoints(m.bid, m.spec), ask: fromPoints(m.ask, m.spec), time };
@@ -127,13 +133,17 @@ function validRequest(req: PlanRequest): string | null {
     case "close":
       return null;
     case "breakeven":
-      return Number.isSafeInteger(req.offsetPoints) && req.offsetPoints >= 0
+      return Number.isSafeInteger(req.offsetPoints) &&
+        req.offsetPoints >= 0 &&
+        req.offsetPoints <= MAX_POINTS_PARAM
         ? null
-        : "Break-even offset must be a whole number of points, 0 or more.";
+        : `Break-even offset must be a whole number of points, 0 to ${String(MAX_POINTS_PARAM)}.`;
     case "lock":
-      return Number.isSafeInteger(req.distancePoints) && req.distancePoints >= 1
+      return Number.isSafeInteger(req.distancePoints) &&
+        req.distancePoints >= 1 &&
+        req.distancePoints <= MAX_POINTS_PARAM
         ? null
-        : "Lock distance must be a whole number of points, 1 or more.";
+        : `Lock distance must be a whole number of points, 1 to ${String(MAX_POINTS_PARAM)}.`;
   }
 }
 
@@ -160,7 +170,14 @@ function loadMarket(req: PlanRequest, snap: MarketSnapshot, bufferPoints: number
       : [
           ...(snap.quote.symbol === symbol ? [] : [`quote is for ${snap.quote.symbol}`]),
           ...quoteProblems(snap.quote).map((p) => `quote: ${p}`),
+          ...(specProblems(snap.spec).length === 0 &&
+          !(representable(snap.quote.bid, snap.spec) && representable(snap.quote.ask, snap.spec))
+            ? ["quote: price out of range for this symbol"]
+            : []),
         ]),
+    ...(Number.isSafeInteger(bufferPoints) && bufferPoints >= 0 && bufferPoints <= 1000
+      ? []
+      : ["config: buffer must be an integer 0..1000 points"]),
   ];
   if (problems.length > 0 || snap.quote === null) {
     return {
@@ -181,19 +198,36 @@ function violationMessage(
   n: number,
   m: Market,
 ) {
-  return `${SIDE_WORD[side]} ${level} must be ${relation} ${formatPrice(boundary, m.spec)} (${plural(n, "position")}, ${rule}).`;
+  const tail = `(${plural(n, "position")}, ${rule}).`;
+  if (rule === "R0.4") {
+    return `${SIDE_WORD[side]} ${level} would be 0 or below on ${m.spec.symbol}, which MT5 reads as "no ${level}" ${tail}`;
+  }
+  return `${SIDE_WORD[side]} ${level} must be ${relation} ${formatPrice(boundary, m.spec)} ${tail}`;
 }
 
 interface Accumulated {
   readonly items: PlanItem[];
   readonly skipped: Skipped[];
   readonly violations: Map<string, PlanViolation>;
+  /** R2.11 */
+  preservedInsideD: number;
 }
 
-const HELPER_SKIP: Record<"R8.1" | "R8.2" | "R8.3", string> = {
+const newAcc = (): Accumulated => ({ items: [], skipped: [], violations: new Map(), preservedInsideD: 0 });
+
+/** Warnings every modify plan can carry. */
+function modifyWarnings(acc: Accumulated): string[] {
+  if (acc.preservedInsideD === 0) return [];
+  return [
+    `${plural(acc.preservedInsideD, "position")} keep an existing level inside the broker's stop distance. The broker may reject those items; they'd be reported as failed, not done. (R2.11)`,
+  ];
+}
+
+const HELPER_SKIP: Record<"R8.1" | "R8.2" | "R8.3" | "R8.6", string> = {
   "R8.1": "not far enough in profit",
   "R8.2": "not in profit",
   "R8.3": "SL already better",
+  "R8.6": "not enough profit to lock",
 };
 
 function skipReason(d: Extract<HelperDecision, { kind: "skip" }>, m: Market): string {
@@ -206,6 +240,7 @@ function skipReason(d: Extract<HelperDecision, { kind: "skip" }>, m: Market): st
 function record(acc: Accumulated, pos: Position, d: HelperDecision, m: Market): void {
   switch (d.kind) {
     case "modify":
+      if ("preservedInsideD" in d) acc.preservedInsideD += 1;
       acc.items.push({
         op: "modify",
         positionId: pos.id,
@@ -260,18 +295,22 @@ function buildLevels(
   m: Market,
   time: number,
 ): PlanResult {
-  const change: LevelChange = {
-    ...(req.stopLoss === undefined ? {} : { sl: roundToTickPoints(req.stopLoss, m.spec) }),
-    ...(req.takeProfit === undefined ? {} : { tp: roundToTickPoints(req.takeProfit, m.spec) }),
-  };
-  const acc: Accumulated = { items: [], skipped: [], violations: new Map() };
+  const sl = req.stopLoss === undefined ? undefined : tryRoundToTickPoints(req.stopLoss, m.spec);
+  const tp = req.takeProfit === undefined ? undefined : tryRoundToTickPoints(req.takeProfit, m.spec);
+  if (sl === null || tp === null) {
+    return fail({ code: "VALIDATION", message: `That price is out of range for ${m.spec.symbol}. (R0.6)` });
+  }
+  const change: LevelChange = { ...(sl === undefined ? {} : { sl }), ...(tp === undefined ? {} : { tp }) };
+  const acc = newAcc();
   for (const pos of [...positions].sort(byExposure)) record(acc, pos, decideModify(pos, change, m), m);
   if (acc.violations.size > 0) return invalid(acc, m);
 
-  const warnings =
-    acc.items.length === 0
+  const warnings = [
+    ...modifyWarnings(acc),
+    ...(acc.items.length === 0
       ? ["Nothing to change: every matching position already has these levels or is frozen."]
-      : [];
+      : []),
+  ];
   return {
     ok: true,
     plan: {
@@ -292,9 +331,12 @@ function buildCloseAt(
   m: Market,
   time: number,
 ): PlanResult {
-  const x: Points = roundToTickPoints(req.price, m.spec);
+  const x: Points | null = tryRoundToTickPoints(req.price, m.spec);
+  if (x === null) {
+    return fail({ code: "VALIDATION", message: `That price is out of range for ${m.spec.symbol}. (R0.6)` });
+  }
   const xText = formatPrice(fromPoints(x, m.spec), m.spec);
-  const acc: Accumulated = { items: [], skipped: [], violations: new Map() };
+  const acc = newAcc();
   const tooClose = new Map<Side, number>();
   let asSL = 0;
   let asTP = 0;
@@ -327,6 +369,7 @@ function buildCloseAt(
   const counts = sideCounts(acc.items);
   const warnings = [
     "Only covers positions open now. Positions opened later need the trigger set again. (R3.5)",
+    ...modifyWarnings(acc),
   ];
   if (counts.buys > 0 && counts.sells > 0) {
     // R3.6, ADR-0004
@@ -357,7 +400,7 @@ function buildHelper(
   m: Market,
   time: number,
 ): PlanResult {
-  const acc: Accumulated = { items: [], skipped: [], violations: new Map() };
+  const acc = newAcc();
   for (const pos of [...positions].sort(byExposure)) {
     const d =
       req.action === "breakeven"
@@ -366,7 +409,7 @@ function buildHelper(
     record(acc, pos, d, m);
   }
   if (acc.violations.size > 0) return invalid(acc, m);
-  const warnings = ["Excludes swaps and commission. (R8.5)"];
+  const warnings = ["Excludes swaps and commission. (R8.5)", ...modifyWarnings(acc)];
   if (acc.items.length === 0) warnings.push("Nothing to change: no matching position qualifies right now.");
   return {
     ok: true,
@@ -388,17 +431,26 @@ function buildClose(
   orders: readonly PendingOrder[],
   snap: MarketSnapshot,
   bufferPoints: number,
+  dataWarnings: readonly string[],
 ): PlanResult {
-  const items: PlanItem[] = [...positions]
-    .sort(byLoss)
-    .map((p) => ({ op: "close", positionId: p.id, side: p.side, volume: p.volume }));
+  const items: PlanItem[] = [...positions].sort(byLoss).map((p) => ({
+    op: "close",
+    positionId: p.id,
+    side: p.side,
+    volume: Number.isFinite(p.volume) && p.volume > 0 ? p.volume : null,
+  }));
   const cancels: PlanItem[] = [...orders]
     .sort((a, b) => compareIds(a.id, b.id))
     .map((o) => ({ op: "cancel", orderId: o.id }));
 
-  // R4.7: the quote is informational only. A broken spec or quote never blocks close-now.
-  const loaded = loadMarket(req, snap, bufferPoints);
-  const quote = "code" in loaded ? null : quoteOut(loaded.m, loaded.time);
+  // R4.7: the quote is informational only. Nothing about market data may stop close-now, not even a throw.
+  let quote: PlanDraft["quote"] = null;
+  try {
+    const loaded = loadMarket(req, snap, bufferPoints);
+    if (!("code" in loaded)) quote = quoteOut(loaded.m, loaded.time);
+  } catch {
+    quote = null;
+  }
 
   return {
     ok: true,
@@ -409,9 +461,19 @@ function buildClose(
       items: [...items, ...cancels],
       skipped: [],
       breakdown: { ...sideCounts(items), cancels: cancels.length },
-      warnings: quote === null ? ["Live price unavailable. Positions still close at market."] : [],
+      warnings: [
+        ...(quote === null ? ["Live price unavailable. Positions still close at market."] : []),
+        ...dataWarnings,
+      ],
     },
   };
+}
+
+function duplicatesIn(snap: MarketSnapshot): string[] {
+  return [
+    ...duplicateIds(snap.positions.map((p) => p.id)).map((id) => `duplicate position ${id}`),
+    ...duplicateIds(snap.orders.map((o) => o.id)).map((id) => `duplicate order ${id}`),
+  ];
 }
 
 export function buildPlan(req: PlanRequest, snap: MarketSnapshot, opts: PlanOptions = {}): PlanResult {
@@ -419,10 +481,32 @@ export function buildPlan(req: PlanRequest, snap: MarketSnapshot, opts: PlanOpti
   const problem = validRequest(req);
   if (problem !== null) return fail({ code: "VALIDATION", message: problem });
 
-  const dupes = [
-    ...duplicateIds(snap.positions.map((p) => p.id)).map((id) => `duplicate position ${id}`),
-    ...duplicateIds(snap.orders.map((o) => o.id)).map((id) => `duplicate order ${id}`),
+  const symbol = req.filter.symbol;
+  const dupes = duplicatesIn(snap);
+  // R0.5: only data for the symbol we're acting on matters.
+  const bad = [
+    ...snap.positions.filter((p) => p.symbol === symbol).flatMap(positionProblems),
+    ...snap.orders.filter((o) => o.symbol === symbol).flatMap(orderProblems),
   ];
+
+  if (req.action === "close") {
+    // R4.7 + R0.3 + R0.5: close-now de-duplicates and warns instead of refusing.
+    const positions = uniqueById(snap.positions).filter((p) => matchesPosition(p, req.filter));
+    const orders = req.cancelPending
+      ? uniqueById(snap.orders).filter((o) => matchesOrder(o, req.filter))
+      : [];
+    if (positions.length === 0 && orders.length === 0) {
+      return fail({ code: "NO_MATCH", message: "Nothing to close." });
+    }
+    const dataWarnings = [
+      ...(dupes.length > 0 ? [`Broker sent duplicate tickets (${dupes.join(", ")}); each closes once.`] : []),
+      ...(bad.length > 0
+        ? [`Some broker data looked wrong (${bad.join(", ")}); closing by ticket anyway.`]
+        : []),
+    ];
+    return buildClose(req, positions, orders, snap, bufferPoints, dataWarnings);
+  }
+
   if (dupes.length > 0) {
     return fail({
       code: "BROKER_UNAVAILABLE",
@@ -430,19 +514,27 @@ export function buildPlan(req: PlanRequest, snap: MarketSnapshot, opts: PlanOpti
       details: dupes,
     });
   }
-
-  const positions = snap.positions.filter((p) => matchesPosition(p, req.filter));
-
-  if (req.action === "close") {
-    const orders = req.cancelPending ? snap.orders.filter((o) => matchesOrder(o, req.filter)) : [];
-    if (positions.length === 0 && orders.length === 0) {
-      return fail({ code: "NO_MATCH", message: "Nothing to close." });
-    }
-    return buildClose(req, positions, orders, snap, bufferPoints);
+  if (bad.length > 0) {
+    return fail({
+      code: "BROKER_UNAVAILABLE",
+      message: "Broker sent position data we can't trust. Refresh and try again.",
+      details: bad,
+    });
   }
 
   const loaded = loadMarket(req, snap, bufferPoints);
   if ("code" in loaded) return fail(loaded);
+  const offGrid = snap.positions
+    .filter((p) => p.symbol === symbol)
+    .flatMap((p) => positionGridProblems(p, loaded.m.spec));
+  if (offGrid.length > 0) {
+    return fail({
+      code: "BROKER_UNAVAILABLE",
+      message: "Broker sent position data we can't trust. Refresh and try again.",
+      details: offGrid,
+    });
+  }
+  const positions = snap.positions.filter((p) => matchesPosition(p, req.filter));
   if (positions.length === 0) return fail({ code: "NO_MATCH", message: "No matching open positions." });
 
   switch (req.action) {

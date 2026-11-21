@@ -2,7 +2,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { compareIds, duplicateIds, matchesOrder, matchesPosition, pendingSide } from "@/domain/filter";
 import { buildPlan, type MarketSnapshot, type PlanRequest, type PlanResult } from "@/domain/plan";
-import { roundToTick } from "@/domain/price";
+import { fromPoints, toPoints } from "@/domain/price";
 import type { PendingOrder, PlanItem, Position, PositionFilter, SymbolSpec } from "@/domain/types";
 import { EURUSD, position, quote, US30, XAUUSD } from "./fixtures";
 
@@ -90,7 +90,7 @@ describe("R0.3 unique tickets", () => {
 
   it.each<PlanRequest>([
     { action: "levels", filter: ALL, stopLoss: 1.08 },
-    { action: "close", filter: ALL, cancelPending: true },
+    { action: "closeAt", filter: ALL, price: 1.09 },
   ])("refuses a snapshot with a duplicate position ticket ($action)", (req) => {
     const twin = position("BUY", { id: "dup" });
     const e = err(buildPlan(req, snap([twin, { ...twin }])));
@@ -101,15 +101,32 @@ describe("R0.3 unique tickets", () => {
     });
   });
 
-  it("refuses duplicate order tickets too", () => {
+  it("refuses duplicate order tickets for non-close actions", () => {
     const e = err(
       buildPlan(
-        { action: "close", filter: ALL, cancelPending: true },
-        snap([], { orders: [order(), order()] }),
+        { action: "levels", filter: ALL, stopLoss: 1.08 },
+        snap([position("BUY")], { orders: [order(), order()] }),
       ),
     );
     if (e.code === "BROKER_UNAVAILABLE") expect(e.details).toEqual(["duplicate order 9001"]);
     else expect.unreachable();
+  });
+
+  it("close-now de-duplicates instead of refusing: each ticket closes once, with a warning (R4.7)", () => {
+    const twin = position("BUY", { id: "dup" });
+    const plan = ok(
+      buildPlan(
+        { action: "close", filter: ALL, cancelPending: true },
+        snap([twin, { ...twin }], { orders: [order(), order()] }),
+      ),
+    );
+    expect(plan.items).toEqual([
+      { op: "close", positionId: "dup", side: "BUY", volume: 0.1 },
+      { op: "cancel", orderId: "9001" },
+    ]);
+    expect(plan.warnings).toContain(
+      "Broker sent duplicate tickets (duplicate position dup, duplicate order 9001); each closes once.",
+    );
   });
 });
 
@@ -158,8 +175,9 @@ describe("levels: F1 bulk SL/TP", () => {
     const byId = new Map(positions.map((p) => [p.id, p]));
     for (const item of modifies(plan.items)) {
       expect(item.sl).toBe(1.08);
-      // Preserved exactly, normalised onto the tick grid (raw floats like 1.0900100000000001 come back as 1.09001).
-      expect(item.tp).toBe(roundToTick(byId.get(item.positionId)!.tp!, SPEC));
+      // Preserved exactly at point precision (raw floats like 1.0900100000000001 come back as 1.09001).
+      // Not re-rounded to tick: the broker already holds this level, we must send back the same one.
+      expect(item.tp).toBe(fromPoints(toPoints(byId.get(item.positionId)!.tp!, SPEC), SPEC));
     }
     expect(plan.breakdown).toEqual({ buys: 1000, sells: 0 });
   });

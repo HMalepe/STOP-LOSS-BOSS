@@ -100,7 +100,7 @@ describe("R8.2 lock profit", () => {
   });
 
   it("sell: SL = ask + N", () => {
-    expect(decideLock(position("SELL", { profit: 5 }), 20, M)).toEqual({
+    expect(decideLock(position("SELL", { profit: 5, openPrice: 1.087 }), 20, M)).toEqual({
       kind: "modify",
       sl: 108630,
       tp: null,
@@ -126,9 +126,33 @@ describe("R8.2 lock profit", () => {
     });
   });
 
+  it("R8.6: never locks a loss, even if the broker's P/L says 'in profit' (e.g. swaps)", () => {
+    // Sell opened at 1.08620, ask 1.08610, profit +0.1 from swap. Lock 50 → SL 1.08660 would lock a 4-point loss.
+    expect(decideLock(position("SELL", { openPrice: 1.0862, profit: 0.1 }), 50, M)).toEqual({
+      kind: "skip",
+      rule: "R8.6",
+    });
+    // Exactly at entry is allowed: that's a break-even lock, not a loss.
+    expect(decideLock(position("BUY", { openPrice: 1.0858, profit: 1 }), 20, M)).toMatchObject({
+      kind: "modify",
+      sl: 108580,
+    });
+    expect(decideLock(position("BUY", { openPrice: 1.08581, profit: 1 }), 20, M)).toEqual({
+      kind: "skip",
+      rule: "R8.6",
+    });
+  });
+
+  it("R0.4: a lock distance bigger than the price itself is a plan error, never SL 0 or below", () => {
+    expect(decideLock(position("BUY", { profit: 5, openPrice: 0.5 }), 108600, M)).toMatchObject({
+      kind: "invalid",
+      violations: [{ rule: "R0.4" }],
+    });
+  });
+
   it("R8.4: off-grid result rounds away from price", () => {
-    const buy = decideLock(position("BUY", { symbol: "US30", profit: 5 }), 10, IDX); // 42099.90 → 42099.75
-    const sell = decideLock(position("SELL", { symbol: "US30", profit: 5 }), 10, IDX); // 42101.10 → 42101.25
+    const buy = decideLock(position("BUY", { symbol: "US30", profit: 5, openPrice: 42000 }), 10, IDX); // 42099.90 → 42099.75
+    const sell = decideLock(position("SELL", { symbol: "US30", profit: 5, openPrice: 42200 }), 10, IDX); // 42101.10 → 42101.25
     expect(buy).toMatchObject({ sl: 4209975 });
     expect(sell).toMatchObject({ sl: 4210125 });
   });
@@ -136,7 +160,11 @@ describe("R8.2 lock profit", () => {
   it("property: a lock SL is never closer than N to price", () => {
     fc.assert(
       fc.property(fc.constantFrom<Side>("BUY", "SELL"), fc.integer({ min: 1, max: 500 }), (side, n) => {
-        const d = decideLock(position(side, { symbol: "US30", profit: 1 }), n, IDX);
+        const d = decideLock(
+          position(side, { symbol: "US30", profit: 1, openPrice: side === "BUY" ? 41000 : 43000 }),
+          n,
+          IDX,
+        );
         if (d.kind !== "modify" || d.sl === null) return;
         expect(Math.abs(d.sl - ref(side, IDX))).toBeGreaterThanOrEqual(n);
       }),
@@ -195,15 +223,15 @@ describe("plan builder: breakeven and lock", () => {
   it.each([
     [
       { action: "breakeven", filter, offsetPoints: -1 },
-      "Break-even offset must be a whole number of points, 0 or more.",
+      "Break-even offset must be a whole number of points, 0 to 1000000.",
     ],
     [
       { action: "breakeven", filter, offsetPoints: 1.5 },
-      "Break-even offset must be a whole number of points, 0 or more.",
+      "Break-even offset must be a whole number of points, 0 to 1000000.",
     ],
     [
       { action: "lock", filter, distancePoints: 0 },
-      "Lock distance must be a whole number of points, 1 or more.",
+      "Lock distance must be a whole number of points, 1 to 1000000.",
     ],
   ] as const)("validates parameters: %o", (req, message) => {
     expect(buildPlan(req, snap([position("BUY")]))).toEqual({

@@ -17,8 +17,16 @@ Facts marked **[T]** must be tested on an Exness demo account through MetaApi in
 - R0.1 **No spec, no plan.** If the symbol spec (point, digits, stopsLevel, freezeLevel, volume limits) can't be loaded, refuse the plan with `BROKER_UNAVAILABLE`. Never fall back to `d = 0` or any default. (The v1 prototype did this; it is a bug.)
 - R0.2 **Hedging accounts only for multi-position features.** On a netting account, N entries collapse into one position and every "batch" rule becomes meaningless. At connect, read the account's margin mode [T: confirm MetaApi field name]; if not hedging, disable entries/ladders and show why. Modify/close/trigger still work.
 
+- R0.4 **No level at or below zero.** After rounding, every SL/TP must be > 0 points. On the MT5 wire 0 means "remove the level", so a
+  price that rounds to 0 (tiny input, sub-tick input on an index, huge lock distance) would silently wipe or skip a stop. It is a plan error.
+- R0.5 **Snapshot sanity.** For the requested symbol, each position needs a non-empty id, finite openPrice > 0, finite volume > 0, finite
+  profit, SL/TP null or > 0, and a safe-integer magic ≥ 0 (orders likewise). Bad data → `BROKER_UNAVAILABLE`, except close-now (R4.7),
+  which still closes by ticket, puts unknown-P/L positions first, and warns.
+- R0.6 **Inputs must fit.** Prices must convert to safe-integer points on the symbol's grid; point offsets/distances are integers ≤ 1,000,000.
+  Otherwise `VALIDATION`. The domain never throws on bad input; it returns a coded error.
 - R0.3 **Unique tickets.** If a snapshot contains the same position id (or order id) twice, the broker data is corrupt: refuse the plan
-  with `BROKER_UNAVAILABLE`, for every action including close-now. Otherwise one ticket could be modified or closed twice.
+  with `BROKER_UNAVAILABLE`. Exception, close-now (R4.7): de-duplicate and warn, because closing a ticket twice is harmless
+  (the second returns "already closed") and a blocked panic button is not.
 
 ## §1 Filters
 Position matches if symbol equals AND (side = ALL or matches) AND (magic matches if given) AND (inProfitOnly → profit > 0).
@@ -40,6 +48,8 @@ Position matches if symbol equals AND (side = ALL or matches) AND (magic matches
   price (buy: Bid, sell: Ask). The docs don't say whether that means the existing or the new level, so both are checked: new levels via `d`
   (R2.1 to R2.4), and any **existing** SL/TP within `freezeLevel × point` of ref (≤, inclusive) makes the item a skip with reason
   "frozen: TP 1.08650 is within the freeze level". Not a plan error: the position is about to close on its own. [T] confirm on demo.
+- R2.11 **Preserved level inside d (warn).** Only levels that change are validated. If a preserved existing level sits inside `d` (but outside
+  freeze), the plan warns that the broker may reject that item. [T] If the demo shows MT5 re-checks preserved levels, this becomes a skip.
 - R2.10 **Item order** for modify plans: positions with no SL first (most exposed), then largest floating loss first, then id (deterministic).
 - R2.8 No-op skip: if the new level equals the current level (in points), skip the item and report "unchanged", with no broker call.
   If the broker still answers `TRADE_RETCODE_NO_CHANGES` (10025) it counts as success [V: MetaApi lists 10025 as a success code].
@@ -113,6 +123,8 @@ At execute time, re-read the quote. If any item's validity flipped since preview
 - R8.2 Lock: `sl = ref − N*point` (buy) / `ref + N*point` (sell); only in-profit positions (others skipped "not in profit").
   If N doesn't clear §2 the plan is invalid (R2.6): it fails the same way for every position on that side, so it's a parameter error, not a per-position skip.
 - R8.3 Neither helper may move an existing SL to a worse level (further from price). If it would, skip with "SL already better".
+- R8.6 **Lock never locks a loss.** After rounding, a lock SL must be at or past the entry (buy `sl ≥ open`, sell `sl ≤ open`), else skip
+  "not enough profit to lock". (`profit > 0` alone can include swaps; this is the geometric check the name promises.)
 - R8.4 **Tick rounding never gives less than asked.** Break-even rounds toward profit (buy up, sell down), so it locks at least BE + N.
   Lock rounds away from price (buy down, sell up), so the stop is at least N points away. Only matters when tickSize > point.
 - R8.5 Parameters: break-even offset N is an integer ≥ 0 (0 = exact entry price); lock distance N is an integer ≥ 1. Both exclude swaps and commission.

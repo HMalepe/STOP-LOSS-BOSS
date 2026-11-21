@@ -82,7 +82,13 @@ export type PlanItem =
       readonly sl: Price | null;
       readonly tp: Price | null;
     }
-  | { readonly op: "close"; readonly positionId: string; readonly side: Side; readonly volume: number }
+  | {
+      readonly op: "close";
+      readonly positionId: string;
+      readonly side: Side;
+      /** Informational: close is by ticket. null if the broker sent a bad volume (R0.5). */
+      readonly volume: number | null;
+    }
   | { readonly op: "cancel"; readonly orderId: string };
 
 export interface Skipped {

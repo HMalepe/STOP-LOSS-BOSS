@@ -29,10 +29,27 @@ export function tickPoints(grid: Grid): number {
   return Math.max(1, Math.round(grid.tickSize / grid.point));
 }
 
-/** Nearest tick, in points. Ties round up (Math.round). */
-export function roundToTickPoints(price: number, grid: Grid): Points {
+/**
+ * Nearest tick, in points, or null if the price can't be represented (non-finite, or too large for exact integers).
+ * Rounds once, straight to the tick (rounding to point first, then to tick, can pick the wrong tick). Ties round up.
+ */
+export function tryRoundToTickPoints(price: number, grid: Grid): Points | null {
+  if (!Number.isFinite(price)) return null;
   const t = tickPoints(grid);
-  return points(Math.round(toPoints(price, grid) / t) * t);
+  const n = Math.round(price / (t * grid.point)) * t;
+  return Number.isSafeInteger(n) ? (n as Points) : null;
+}
+
+/** Nearest tick, in points. Throws on unrepresentable input: validate with tryRoundToTickPoints first. */
+export function roundToTickPoints(price: number, grid: Grid): Points {
+  const p = tryRoundToTickPoints(price, grid);
+  if (p === null) throw new RangeError(`price ${price} can't be placed on the tick grid`);
+  return p;
+}
+
+/** True if this raw broker price converts to exact integer points. */
+export function representable(price: number, grid: Grid): boolean {
+  return Number.isFinite(price) && Number.isSafeInteger(Math.round(price / grid.point));
 }
 
 export function roundToTick(price: number, grid: Grid): Price {
