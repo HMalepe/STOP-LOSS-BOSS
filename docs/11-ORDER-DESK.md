@@ -7,8 +7,10 @@ can do it by hand in MT5. Then the same tool manages and exits the lot in one ta
 - **Order:** one market or pending order with optional SL/TP.
 - **Batch:** many orders built from one instruction (count × lot, or a ladder).
 - **Preset:** a saved batch recipe the owner fires in one tap. Example "Scalp 10": BUY, 10 × 0.05, SL 150 pts, TP 300 pts.
-- **Group tag:** every order from one batch gets the same `comment` (e.g. `OD:<shortId>`) and the app's magic number, so it can be
-  managed as a unit later ("move SL on this batch only", "close this batch").
+- **Group tag:** every order from one batch gets a **batch magic number** (`APP_MAGIC_PREFIX × 10^9 + batchSeq`) so it can be
+  managed as a unit later ("move SL on this batch only", "close this batch"). Matching is on magic only; the `OD:<short>` comment
+  is for humans reading MT5. MetaApi caps `comment` + `clientId` at 26 characters. Full rule: 03-TRADING-RULES R9.1, ADR-0005.
+- **Hedging account required** for batches (R0.2). On netting, N entries become one position.
 
 ## Features
 | ID | Feature | Notes |
@@ -22,13 +24,8 @@ can do it by hand in MT5. Then the same tool manages and exits the lot in one ta
 | OD7 | Caps | Max orders per action, max total lots, max risk per action (% of equity). All configurable, re-auth to change. |
 | OD8 | Spread guard | Optional: refuse to fire a batch if spread > X points (scalpers get killed by spread spikes). |
 
-## Rules (add to 03-TRADING-RULES as §9 during Phase 8; IDs reserved here)
-- R9.1 Every order from a batch carries the batch's group tag in `comment` and the app magic number.
-- R9.2 Risk to SL per order = |entry − SL| / tickSize × tickValue × lots. Verify MetaApi/MT5 field names for tick value. Never guess.
-- R9.3 Margin check uses the broker's margin calculation if MetaApi exposes it; otherwise block with "can't verify margin" rather than estimate (owner may override per action in demo only).
-- R9.4 Spread guard compares (ask − bid) in points to the configured max at execute time, not preview time.
-- R9.5 Scaled ladder lots: flat = same; increasing/decreasing = linear from lotStart to lotEnd, each rounded down to volumeStep; total shown in preview.
-- R9.6 Preset firing always builds a fresh plan from live quote/spec; presets store recipes, never prices relative to a stale quote (unless absolute-price preset, flagged as such).
+## Rules
+Moved into `03-TRADING-RULES.md` §9 (R9.1 to R9.6) during Phase 00 so there is one source of truth. Don't duplicate them here.
 
 ## Speed path for OD1 (what makes it feel instant)
 - The worker holds a warm streaming connection (ADR-0003). Quote and spec are cached and refreshed on stream.

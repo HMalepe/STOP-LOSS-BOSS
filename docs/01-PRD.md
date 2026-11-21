@@ -23,12 +23,14 @@ Held broker-side, so it fires with the app closed.
 - Show split before execute: "39 as TP, 13 as SL".
 - Refuse if X is inside the stop level for any position; suggest Close All Now.
 - **Acceptance:** mixed buys/sells, X above market → buys TP=X, sells SL=X; X below → the reverse.
+- Preview explains the bid/ask trigger timing whenever both sides are present (03 R3.6, ADR-0004).
 
 ### F3: Close all now (panic)
 Market-close every matching position; optionally cancel pending orders. Two-step confirm (arm → fire within 4s).
 - Works even when the kill switch is on.
 - Executes with maximum safe concurrency (09-PERFORMANCE).
 - **Acceptance:** 1,000 positions closed with per-position results; failed ones retried automatically up to the retry policy, then listed with a "retry failed" button.
+- Biggest floating losers close first (R4.6). Progress shows an ETA, since 1,000 closes take ~10 to 20 s at MetaApi's verified credit limits (09).
 
 ### F4: Bulk order placement
 - **F4a, bulk market entries:** N orders × lot size, side, symbol, optional SL/TP on each (attached at entry, not modified later).
@@ -46,6 +48,13 @@ Live count, floating P/L, bid/ask, spread, open orders count, margin level, acco
 
 ### F7: History and audit
 List of past actions: time, type, plan summary, success/fail counts, latency; tap to see per-position detail.
+
+## Release slices (ADR-0006, owner to confirm: PROGRESS Q3)
+- **v1 "Usable" (Phases 1 to 7, thin UI):** F1 bulk SL/TP, F2 close at price, F3 close now, F4a bulk market entries with stops,
+  F6 dashboard, F7 history. Mock and demo modes only. Single owner login with TOTP.
+- **v1.1 "Order Desk":** F4b ladders, F4c cancel pending, OD3/OD4 presets and quick-fire, OD5 batch management, OD6 risk preview, OD8 spread guard.
+- **v1.2 "Live":** Phase 9 worker on streaming, Phase 10 hardening, go-live checklist, F5 helpers.
+Rule: nothing reaches LIVE until v1.2's checklist passes, whatever slice it belongs to.
 
 ## Out of scope (v1)
 Strategy automation, signals, copy trading, multiple brokers at once, native apps.

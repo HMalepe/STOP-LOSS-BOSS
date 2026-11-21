@@ -35,3 +35,14 @@
 16. Spread above guard at execute → whole batch refused, zero broker calls (R9.4).
 17. Risk preview total equals the sum of per-order risk; insufficient margin → blocked (R9.2–R9.3).
 18. Group-tag management only touches orders with that tag (R9.1).
+
+## Added in Phase 00 review
+19. Spec fetch fails → plan refused with BROKER_UNAVAILABLE; no fallback to d = 0 (R0.1).
+20. Netting account → entries/ladders refused with a reason; modify/close still allowed (R0.2).
+21. Entry times out but the order actually landed (MockBroker "lost reply" fault) → reconcile finds it by magic/clientId, **no second order** (R6.5).
+22. 429 with `recommendedRetryTime` → limiter pauses globally until that time; no item exceeds 3 attempts (R6.2).
+23. `comment` + `clientId` > 26 chars → plan builder rejects before any broker call (R9.1).
+24. `decodeMagic` property test: a manual trade (magic 0) or another EA's magic never matches a batch filter (R9.1).
+25. Close-at with mixed sides → preview contains the bid/ask timing warning (R3.6).
+26. MockBroker in "omit wipes level" mode: modify SL only on a position with a TP → TP still present afterwards (R2.7).
+27. Break-even never moves an SL further from price (R8.3).
