@@ -166,3 +166,59 @@ describe("CreditLimiter properties", () => {
     );
   });
 });
+
+describe("Phase 04 review: urgent lane, bad inputs, pause cap", () => {
+  it("urgent waiters are served before normal ones; FIFO within each lane", async () => {
+    const { scheduler, limiter } = make({ maxInFlight: 1 });
+    const order: string[] = [];
+    const take = (name: string, priority: "normal" | "urgent") =>
+      limiter.acquire(1, priority).then(async (release) => {
+        order.push(name);
+        await scheduler.sleep(10);
+        release();
+      });
+    const work = Promise.all([
+      take("n1", "normal"),
+      take("n2", "normal"),
+      take("u1", "urgent"),
+      take("n3", "normal"),
+      take("u2", "urgent"),
+    ]);
+    await scheduler.run(work);
+    expect(order).toEqual(["n1", "u1", "u2", "n2", "n3"]);
+  });
+
+  it("pauseFor ignores non-numbers and is capped", async () => {
+    const { scheduler, limiter } = make();
+    expect(limiter.pauseFor(Number.NaN)).toBe(0);
+    expect(limiter.pauseFor(Number.POSITIVE_INFINITY)).toBe(0);
+    expect(limiter.pauseFor(10 * 60_000)).toBe(30_000);
+    const at = await scheduler.run(limiter.acquire(1).then((r) => (r(), scheduler.now())));
+    expect(at).toBe(30_000);
+  });
+
+  it("safety must be in (0, 1]", () => {
+    const scheduler = new VirtualScheduler();
+    expect(
+      () => new CreditLimiter({ capacity: 100, windowMs: 1, maxInFlight: 1, scheduler, safety: 0 }),
+    ).toThrow(RangeError);
+    expect(
+      () => new CreditLimiter({ capacity: 100, windowMs: 1, maxInFlight: 1, scheduler, safety: 2 }),
+    ).toThrow(RangeError);
+  });
+
+  it("a spend still counts at windowMs − 1 and is gone at windowMs", async () => {
+    const { scheduler, limiter } = make({ maxInFlight: 10 });
+    const at: number[] = [];
+    await scheduler.run(
+      (async () => {
+        (await limiter.acquire(100))();
+        await scheduler.sleep(999);
+        const release = await limiter.acquire(1);
+        at.push(scheduler.now());
+        release();
+      })(),
+    );
+    expect(at).toEqual([1000]);
+  });
+});

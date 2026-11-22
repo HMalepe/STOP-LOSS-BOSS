@@ -35,8 +35,9 @@ export interface ItemResult {
   readonly latencyMs: number;
   readonly positionId?: string;
   readonly orderId?: string;
-  /** R6.7: an entry that filled only partly. */
+  /** R6.7: an entry that filled only partly, and how much did fill (when it could be read). */
   readonly partial?: boolean;
+  readonly filledVolume?: number;
 }
 
 export interface Progress {
@@ -57,7 +58,13 @@ export interface Summary extends Progress {
 
 export type ExecEvent =
   | { readonly type: "item"; readonly item: ItemResult; readonly progress: Progress }
-  | { readonly type: "complete"; readonly summary: Summary; readonly items: readonly ItemResult[] };
+  /** Item results are in the item events (not repeated here: halves memory per execution). */
+  | { readonly type: "complete"; readonly summary: Summary };
+
+/** All item results from a list of events, in plan order. */
+export function resultsOf(events: readonly ExecEvent[]): ItemResult[] {
+  return events.flatMap((e) => (e.type === "item" ? [e.item] : [])).sort((a, b) => a.index - b.index);
+}
 
 export function targetOf(item: ExecItem): string {
   switch (item.op) {

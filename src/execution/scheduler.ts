@@ -10,7 +10,12 @@ export interface Scheduler extends Clock {
 
 export const realScheduler: Scheduler = {
   now: () => Date.now(),
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms))),
+  sleep: (ms) =>
+    new Promise((resolve) => {
+      // unref: a pending wait (e.g. on a zombie request) must not keep the process alive at shutdown.
+      const timer = setTimeout(resolve, Math.max(0, ms));
+      (timer as { unref?: () => void }).unref?.();
+    }),
 };
 
 /**

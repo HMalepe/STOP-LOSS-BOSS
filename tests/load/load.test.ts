@@ -11,7 +11,7 @@ import type { SymbolSpec } from "@/domain/types";
 import { execute } from "@/execution/executor";
 import { CreditLimiter } from "@/execution/rateLimiter";
 import { VirtualScheduler } from "@/execution/scheduler";
-import type { ExecEvent, ExecItem, ItemResult, Summary } from "@/execution/types";
+import { resultsOf, type ExecEvent, type ExecItem, type ItemResult, type Summary } from "@/execution/types";
 
 const SPEC: SymbolSpec = {
   symbol: "EURUSD",
@@ -66,7 +66,19 @@ async function run(items: readonly ExecItem[], w: ReturnType<typeof world>) {
   );
   const last = events.at(-1);
   if (last?.type !== "complete") throw new Error("no summary");
-  return { summary: last.summary, results: last.items };
+  return { summary: last.summary, results: resultsOf(events) };
+}
+
+/** Entries that may have landed (done, or reply lost), per clientId. More than 1 = a duplicate, visible or not. */
+function landings(w: ReturnType<typeof world>): number {
+  const per = new Map<string, number>();
+  for (const c of w.broker.calls) {
+    if (c.op !== "market") continue;
+    if (c.result.ok || c.result.code === LOCAL_CODE.ADAPTER_TIMEOUT) {
+      per.set(c.target, (per.get(c.target) ?? 0) + 1);
+    }
+  }
+  return [...per.values()].filter((n) => n > 1).length;
 }
 
 const pct = (xs: number[], p: number) => {
@@ -144,7 +156,9 @@ describe("pnpm load", () => {
 
   it("bulk SL through the whole pipeline: snapshot → buildPlan → execute, 1,000 positions", async () => {
     const w = world(202, { faults: { modify: [{ rate: 0.05, code: RETCODE.PRICE_CHANGED }] } });
+    const seededTps: number[] = [];
     for (let i = 0; i < 1_000; i++) {
+      seededTps.push(Number((1.09 + (i % 40) / 100_000).toFixed(5)));
       w.broker.seedPosition({
         symbol: "EURUSD",
         side: "BUY",
@@ -178,7 +192,9 @@ describe("pnpm load", () => {
     expect(previewMs).toBeLessThan(800); // 09-PERFORMANCE preview budget
     // Every TP survived (R2.7) and every SL landed.
     const after = await w.s.run(w.broker.getPositions());
-    expect(after.every((p) => p.sl === 1.08 && p.tp !== null)).toBe(true);
+    // Every SL landed and every TP is exactly the one it had (R2.7), not just "not null".
+    expect(after.every((p) => p.sl === 1.08)).toBe(true);
+    expect(after.map((p) => p.tp)).toEqual(seededTps);
     expect(row["429s from broker"]).toBe(0);
   }, 120_000);
 
@@ -203,14 +219,37 @@ describe("pnpm load", () => {
     }));
     const { summary, results } = await run(items, w);
     const positions = await w.s.run(w.broker.getPositions());
-    const perClient = new Map<string, number>();
-    for (const p of positions) perClient.set(p.clientId ?? "", (perClient.get(p.clientId ?? "") ?? 0) + 1);
-    const duplicates = [...perClient.values()].filter((n) => n > 1).length;
+    const duplicates = landings(w);
     report("entries 200, 10% lost replies", w, summary, results, duplicates);
 
     expect(duplicates).toBe(0);
     expect(positions.every((p) => p.sl === 1.08)).toBe(true); // no naked entries (R5.3)
     expect(summary.done + summary.unknown + summary.failed).toBe(200);
     expect(results.every((r) => r.attempts <= 3)).toBe(true);
+  }, 120_000);
+
+  it("entries: stuck requests that land AFTER the settle window → unknown, never retried, zero duplicates", async () => {
+    const w = world(404, { lostReplyRate: 0.15, lostReplyDelayMs: 90_000 });
+    const items: ExecItem[] = Array.from({ length: 100 }, (_, i) => ({
+      op: "market",
+      req: {
+        symbol: "EURUSD",
+        side: "BUY",
+        volume: 0.01,
+        sl: 1.08,
+        tp: null,
+        magic: 7731000000002,
+        comment: "OD:load",
+        clientId: `st${String(i)}`,
+      },
+    }));
+    const { summary, results } = await run(items, w);
+    const duplicates = landings(w);
+    report("entries 100, 15% land after 90 s", w, summary, results, duplicates);
+
+    expect(duplicates).toBe(0);
+    expect(summary.unknown).toBeGreaterThan(0);
+    for (const r of results.filter((x) => x.outcome === "unknown")) expect(r.attempts).toBe(1);
+    expect(summary.done + summary.unknown).toBe(100);
   }, 120_000);
 });

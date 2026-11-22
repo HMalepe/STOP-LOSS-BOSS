@@ -7,7 +7,14 @@ import { decideCloseAt } from "./closeAt";
 import { compareIds, duplicateIds, matchesOrder, matchesPosition } from "./filter";
 import { decideBreakeven, decideLock, type HelperDecision } from "./helpers";
 import { orderProblems, positionGridProblems, positionProblems, uniqueById } from "./snapshot";
-import { formatPrice, fromPoints, representable, specProblems, tryRoundToTickPoints } from "./price";
+import {
+  formatPrice,
+  fromPoints,
+  representable,
+  specProblems,
+  toPoints,
+  tryRoundToTickPoints,
+} from "./price";
 import {
   decideModify,
   DEFAULT_BUFFER_POINTS,
@@ -247,6 +254,10 @@ function record(acc: Accumulated, pos: Position, d: HelperDecision, m: Market): 
         side: pos.side,
         sl: d.sl === null ? null : fromPoints(d.sl, m.spec),
         tp: d.tp === null ? null : fromPoints(d.tp, m.spec),
+        before: {
+          sl: pos.sl === null ? null : fromPoints(toPoints(pos.sl, m.spec), m.spec),
+          tp: pos.tp === null ? null : fromPoints(toPoints(pos.tp, m.spec), m.spec),
+        },
       });
       return;
     case "skip":

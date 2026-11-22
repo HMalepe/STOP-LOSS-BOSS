@@ -7,9 +7,16 @@
  * It never throws: every item ends with an outcome. Abort stops new work; calls already in flight finish.
  */
 import type { BrokerProvider, TradeResult } from "@/broker/BrokerProvider";
-import { Channel } from "./channel";
-import type { CreditLimiter } from "./rateLimiter";
-import { DEFAULT_RETRY, runItem, type CallLog, type Revalidate, type RetryPolicy } from "./retries";
+import { Channel, Deferred } from "./channel";
+import type { CreditLimiter, Priority } from "./rateLimiter";
+import {
+  DEFAULT_RETRY,
+  normalisePolicy,
+  runItem,
+  type CallLog,
+  type Revalidate,
+  type RetryPolicy,
+} from "./retries";
 import type { Scheduler } from "./scheduler";
 import { targetOf, type ExecEvent, type ExecItem, type ItemResult, type Progress } from "./types";
 
@@ -29,19 +36,26 @@ export interface ExecuteDeps {
   readonly onCall?: CallLog;
   /** 0..1, for backoff jitter. */
   readonly random?: () => number;
+  /** "urgent" for close-now: served ahead of everything else in the shared limiter. */
+  readonly priority?: Priority;
 }
 
 export function execute(items: readonly ExecItem[], deps: ExecuteDeps): AsyncIterable<ExecEvent> {
   const channel = new Channel<ExecEvent>();
-  void run(items, deps, channel);
+  // run() handles every item's errors itself; this guard only exists so a bug can never leave a consumer hanging.
+  run(items, deps, channel).catch(() => {
+    channel.close();
+  });
   return channel;
 }
 
 async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<ExecEvent>): Promise<void> {
   const startedAt = deps.scheduler.now();
-  const policy: RetryPolicy = { ...DEFAULT_RETRY, ...deps.retry };
+  const policy: RetryPolicy = normalisePolicy({ ...DEFAULT_RETRY, ...deps.retry });
+  const concurrency = Number.isFinite(deps.concurrency) ? Math.max(1, Math.floor(deps.concurrency)) : 1;
   const results: (ItemResult | undefined)[] = new Array<ItemResult | undefined>(items.length).fill(undefined);
   const counts = { finished: 0, done: 0, failed: 0, unknown: 0, skipped: 0 };
+  const inBackground: Promise<void>[] = [];
   let retries = 0;
   let next = 0;
 
@@ -54,6 +68,16 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
     out.push({ type: "item", item: r, progress: progress() });
   };
 
+  // A plan must never touch the same target twice (a double entry, or a false "done" via reconcile): later copies are
+  // refused before anything is sent (QA review).
+  const firstIndex = new Map<string, number>();
+  for (const [index, item] of items.entries()) {
+    const key = `${item.op === "market" || item.op === "pending" ? "entry" : item.op === "cancel" ? "order" : "position"}:${targetOf(item)}`;
+    const first = firstIndex.get(key);
+    if (first === undefined) firstIndex.set(key, index);
+    else finish(blank(index, item, "skipped", `duplicate of item ${String(first)} in this plan: not sent`));
+  }
+
   const worker = async () => {
     for (;;) {
       if (deps.signal?.aborted === true) return;
@@ -61,19 +85,31 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
       const item = items[index];
       if (item === undefined) return;
       next += 1;
-      try {
-        finish(await runItem(index, item, { ...deps, policy, random: deps.random ?? Math.random }));
-      } catch (e) {
+      if (results[index] !== undefined) continue;
+      // An item that has to wait on a slow/stuck request frees its worker (SRE review: otherwise a hung broker stalls
+      // close-now for an hour). It finishes in the background; the run waits for it before completing.
+      const freed = new Deferred();
+      const done = runItem(index, item, {
+        ...deps,
+        policy,
+        random: deps.random ?? Math.random,
+        yieldWorker: () => {
+          freed.resolve();
+        },
+      }).then(finish, (e: unknown) => {
         // Defence in depth: runItem shouldn't throw. If it does, the outcome is unknown, never "done".
         finish(
           blank(index, item, "unknown", `executor error: ${e instanceof Error ? e.message : String(e)}`),
         );
-      }
+      });
+      inBackground.push(done);
+      await Promise.race([done, freed.promise]);
     }
   };
 
-  const workers = Math.max(1, Math.min(deps.concurrency, items.length));
+  const workers = Math.max(1, Math.min(concurrency, items.length));
   await Promise.all(Array.from({ length: workers }, worker));
+  await Promise.all(inBackground);
 
   // Anything never started (abort) is reported, so the counts always add up to the total.
   for (const [index, item] of items.entries()) {
@@ -89,7 +125,6 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
       retries,
       aborted: deps.signal?.aborted === true,
     },
-    items: results.filter((r): r is ItemResult => r !== undefined),
   });
   out.close();
 }

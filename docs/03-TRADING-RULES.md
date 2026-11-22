@@ -126,9 +126,10 @@ For price X and position p:
 
 ## §7 Drift guard
 At execute time, re-read the quote. If any item's validity flipped since preview, abort the whole plan before the first broker call and return "price moved, re-preview". Configurable max drift in points (default: re-validate always).
-- R7.1 **Untouched levels are re-read too.** Modify sends both levels (ADR-0008), so a level the owner changed elsewhere (e.g. added an SL
-  in the MT5 app) after the preview would be overwritten, possibly with "none". At execute, re-read each item's position; if a level the
-  plan is NOT changing differs from what the preview saw, skip that item with "changed since preview, re-preview". Never send it.
+- R7.1 **Untouched levels are re-read too.** Modify sends both levels (ADR-0008), so a level the owner changed elsewhere (e.g. moved the SL
+  in the MT5 app) after the preview would be overwritten. Every modify item carries `before` (the levels the preview saw). At execute and
+  before every retry, re-read the position; if EITHER level differs from `before`, the item is **skipped** ("changed elsewhere since the
+  preview, re-preview"). Never sent. (Board review: checking only the untouched level missed a moved SL on a TP-only plan.)
 - R7.2 **Quote age.** A quote older than `MAX_QUOTE_AGE_MS` (default 3 s while the market is open) is unusable for preview, drift guard
   and retry re-validation (R6.3): refuse with `PRICE_STALE` rather than validate against an old tick. Close-now is exempt (R4.7).
 

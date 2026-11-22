@@ -8,7 +8,7 @@ import { CreditLimiter } from "@/execution/rateLimiter";
 import type { RetryPolicy } from "@/execution/retries";
 import { makeRevalidator } from "@/execution/revalidate";
 import { VirtualScheduler } from "@/execution/scheduler";
-import type { ExecEvent, ExecItem } from "@/execution/types";
+import { resultsOf, type ExecEvent, type ExecItem } from "@/execution/types";
 import type { Price, SymbolSpec } from "@/domain/types";
 
 const SPEC: SymbolSpec = {
@@ -57,7 +57,7 @@ async function collect(items: readonly ExecItem[], deps: Parameters<typeof execu
   );
   const complete = events.at(-1);
   if (complete?.type !== "complete") throw new Error("no complete event");
-  return { events, summary: complete.summary, results: complete.items };
+  return { events, summary: complete.summary, results: resultsOf(events) };
 }
 
 const seedBuy = (b: MockBroker, over: { sl?: number | null; tp?: number | null; id?: string } = {}) =>
@@ -71,12 +71,18 @@ const seedBuy = (b: MockBroker, over: { sl?: number | null; tp?: number | null; 
     magic: 0,
     ...(over.id === undefined ? {} : { id: over.id }),
   });
-const modify = (positionId: string, sl: number | null, tp: number | null = null): ExecItem => ({
+const modify = (
+  positionId: string,
+  sl: number | null,
+  tp: number | null = null,
+  before: { sl: number | null; tp: number | null } = { sl: null, tp: null },
+): ExecItem => ({
   op: "modify",
   positionId,
   side: "BUY",
   sl: sl === null ? null : P(sl),
   tp: tp === null ? null : P(tp),
+  before: { sl: before.sl === null ? null : P(before.sl), tp: before.tp === null ? null : P(before.tp) },
 });
 const close = (positionId: string): ExecItem => ({ op: "close", positionId, side: "BUY", volume: 0.1 });
 const market = (clientId: string): ExecItem => ({
@@ -289,63 +295,93 @@ describe("§6 retries", () => {
   });
 });
 
-describe("R6.3 re-validate a modify before retrying it", () => {
+describe("R6.3 / R7.1 / R7.2: re-validate a modify right before retrying it", () => {
+  /** First attempt requotes, so a retry (and the revalidator) is needed. */
+  const requoteOnce = () => setup({ faults: { modify: [{ rate: 1, code: RETCODE.REQUOTE }] } });
+
   it("price moved so the level is now invalid: fail with the reason, no second send", async () => {
-    const { s, broker, deps } = setup({ faults: { modify: [{ rate: 1, code: RETCODE.REQUOTE }] } });
+    const { s, broker, deps } = requoteOnce();
     const id = seedBuy(broker);
     broker.onBeforeCall(() => {
       broker.setQuote("EURUSD", 1.0801, 1.0802);
     }); // price drops right onto the SL
     const { results } = await collect(
       [modify(id, 1.08)],
-      { ...deps, revalidate: makeRevalidator(broker) },
+      { ...deps, revalidate: makeRevalidator(broker, { clock: s }) },
       s,
     );
     expect(results[0]).toMatchObject({ outcome: "failed", attempts: 1 });
     expect(results[0]?.message).toMatch(/price moved, level no longer valid \(R2\.1 BUY SL\)/);
+    expect(broker.calls).toHaveLength(1);
   });
 
-  it("already at the levels → done; closed → failed; set elsewhere → skipped as failed with re-preview", async () => {
-    const t = setup({ faults: { modify: [{ rate: 1, code: RETCODE.REQUOTE }] } });
-    const revalidate = makeRevalidator(t.broker);
-    const a = seedBuy(t.broker, { sl: 1.08 });
-    const b = seedBuy(t.broker);
-    const c = seedBuy(t.broker);
-    t.broker.closeExternally(b);
-    const d = seedBuy(t.broker, { sl: 1.07 });
-    const { results } = await collect(
-      [modify(a, 1.08), modify(b, 1.08), modify(c, 1.08, null)],
-      { ...t.deps, revalidate },
-      t.s,
-    );
-    expect(results.map((r) => [r.outcome, r.message])).toEqual([
-      ["done", "already at these levels"],
-      ["failed", "position is already closed"],
-      ["failed", "gave up after 3 attempts: TRADE_RETCODE_REQUOTE"],
-    ]);
-    const tp = await collect(
-      [{ op: "modify", positionId: d, side: "BUY", sl: P(1.075), tp: null }],
-      { ...t.deps, revalidate: async (item) => await revalidate(item) },
-      t.s,
-    );
-    expect(tp.results[0]?.outcome).toBe("failed");
-    expect((await revalidate({ op: "modify", positionId: d, side: "BUY", sl: null, tp: null })).ok).toBe(
-      false,
-    );
-    t.broker.seedPosition({
-      id: "tpx",
-      symbol: "EURUSD",
-      side: "BUY",
-      volume: 0.1,
-      openPrice: 1.085,
-      sl: null,
-      tp: 1.09,
-      magic: 0,
+  it("already at the levels → done; position closed meanwhile → failed; both without a second send", async () => {
+    const { s, broker } = requoteOnce();
+    const revalidate = makeRevalidator(broker, { clock: s });
+    const a = seedBuy(broker, { sl: 1.08 });
+    expect(await s.run(revalidate(modify(a, 1.08, null, { sl: 1.08, tp: null }) as never))).toEqual({
+      ok: false,
+      alreadyDone: true,
+      reason: "already at these levels",
     });
-    expect(await revalidate({ op: "modify", positionId: "tpx", side: "BUY", sl: P(1.08), tp: null })).toEqual(
-      { ok: false, reason: "TP was set elsewhere since the preview: re-preview" },
+    const b = seedBuy(broker);
+    broker.closeExternally(b);
+    expect(await s.run(revalidate(modify(b, 1.08) as never))).toEqual({
+      ok: false,
+      reason: "position is already closed",
+    });
+  });
+
+  it("R7.1: the owner moved the SL in MT5 after the preview → the TP-only retry is SKIPPED, the SL is never moved back", async () => {
+    const { s, broker, deps } = requoteOnce();
+    const id = seedBuy(broker, { sl: 1.08, tp: 1.09 });
+    // Plan: change TP only; preview saw SL 1.08.
+    const item = modify(id, 1.08, 1.091, { sl: 1.08, tp: 1.09 });
+    broker.onBeforeCall(({ index }) => {
+      if (index === 0) {
+        // Between attempt 1 and the retry, the owner moves SL to 1.08300 elsewhere.
+        broker.closeExternally("noop");
+        broker.seedPosition({
+          id,
+          symbol: "EURUSD",
+          side: "BUY",
+          volume: 0.1,
+          openPrice: 1.085,
+          sl: 1.083,
+          tp: 1.09,
+          magic: 0,
+        });
+      }
+    });
+    const { results } = await collect(
+      [item],
+      { ...deps, revalidate: makeRevalidator(broker, { clock: s }) },
+      s,
     );
-    t.broker.seedPosition({
+    expect(results[0]).toMatchObject({ outcome: "skipped", attempts: 1 });
+    expect(results[0]?.message).toMatch(/changed elsewhere since the preview \(R7\.1\)/);
+    expect((await s.run(broker.getPositions()))[0]?.sl).toBe(1.083);
+  });
+
+  it("R7.2: a stale quote can't validate a retry", async () => {
+    const { s, broker } = requoteOnce();
+    const id = seedBuy(broker);
+    vi.spyOn(broker, "getQuote").mockResolvedValue({
+      symbol: "EURUSD",
+      bid: 1.086,
+      ask: 1.0861,
+      time: s.now() - 10_000,
+    });
+    const v = await s.run(
+      makeRevalidator(broker, { clock: s, maxQuoteAgeMs: 3_000 })(modify(id, 1.08) as never),
+    );
+    expect(v).toEqual({ ok: false, reason: "PRICE_STALE: the latest quote is older than 3000 ms (R7.2)" });
+  });
+
+  it("frozen and unusable data are refusals too", async () => {
+    const { s, broker } = requoteOnce();
+    const revalidate = makeRevalidator(broker, { clock: s });
+    broker.seedPosition({
       id: "fz",
       symbol: "EURUSD",
       side: "BUY",
@@ -355,42 +391,44 @@ describe("R6.3 re-validate a modify before retrying it", () => {
       tp: 1.08604,
       magic: 0,
     });
-    expect(
-      await revalidate({ op: "modify", positionId: "fz", side: "BUY", sl: P(1.08), tp: P(1.08604) }),
-    ).toEqual({ ok: false, reason: "frozen: TP is within the freeze level" });
+    expect(await s.run(revalidate(modify("fz", 1.08, 1.08604, { sl: null, tp: 1.08604 }) as never))).toEqual({
+      ok: false,
+      reason: "frozen: TP is within the freeze level",
+    });
+    vi.spyOn(broker, "getQuote").mockResolvedValue({ symbol: "EURUSD", bid: 0, ask: 0, time: s.now() });
+    expect(await s.run(revalidate(modify(seedBuy(broker), 1.08) as never))).toEqual({
+      ok: false,
+      reason: "broker data unusable for re-validation",
+    });
   });
 
   it("re-validation that can't read state fails the item instead of guessing", async () => {
-    const { s, broker, deps } = setup({ faults: { modify: [{ rate: 1, code: RETCODE.REQUOTE }] } });
-    const id = seedBuy(broker);
+    const { s, broker, deps } = requoteOnce();
     const revalidate = () => Promise.reject(new Error("stream down"));
-    const { results } = await collect([modify(id, 1.08)], { ...deps, revalidate }, s);
+    const { results } = await collect([modify(seedBuy(broker), 1.08)], { ...deps, revalidate }, s);
     expect(results[0]).toMatchObject({
       outcome: "failed",
       message: "couldn't re-validate before retry: stream down",
     });
-    const bad = setup();
-    vi.spyOn(bad.broker, "getQuote").mockResolvedValue({ symbol: "EURUSD", bid: 0, ask: 0, time: 0 });
-    expect(
-      await makeRevalidator(bad.broker)({
-        op: "modify",
-        positionId: seedBuy(bad.broker),
-        side: "BUY",
-        sl: P(1.08),
-        tp: null,
-      }),
-    ).toEqual({
-      ok: false,
-      reason: "broker data unusable for re-validation",
-    });
-    const thrower = setup({ faults: { modify: [{ rate: 1, code: RETCODE.REQUOTE }] } });
+    const t = requoteOnce();
     const r = await collect(
-      [modify(seedBuy(thrower.broker), 1.08)],
+      [modify(seedBuy(t.broker), 1.08)],
       // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- testing a non-Error rejection on purpose
-      { ...thrower.deps, revalidate: () => Promise.reject("plain") },
-      thrower.s,
+      { ...t.deps, revalidate: () => Promise.reject("plain") },
+      t.s,
     );
     expect(r.results[0]?.message).toBe("couldn't re-validate before retry: plain");
+  });
+
+  it("re-validates a TP-only modify too", async () => {
+    const { s, broker, deps } = requoteOnce();
+    const id = seedBuy(broker, { tp: 1.09 });
+    const { results } = await collect(
+      [modify(id, null, 1.09, { sl: null, tp: 1.09 })],
+      { ...deps, revalidate: makeRevalidator(broker, { clock: s }) },
+      s,
+    );
+    expect(results[0]).toMatchObject({ outcome: "done", message: "already at these levels" });
   });
 });
 
@@ -423,12 +461,37 @@ describe("zombie rule: a timed-out call must settle before we move on", () => {
     latencyMs: 9,
   };
 
-  it("late success → done, no second send", async () => {
+  it("modify: late success → done, no second send", async () => {
     const { s, broker, deps } = setup();
     const id = seedBuy(broker);
-    scripted(broker, "closePosition", { settled: s.sleep(2_000).then(() => done) });
-    const { results } = await collect([close(id)], deps, s);
+    scripted(broker, "modifyPosition", {
+      op: "modify",
+      settled: s.sleep(2_000).then(() => ({ ...done, op: "modify" as const })),
+    });
+    const spy = vi.spyOn(broker, "modifyPosition");
+    const { results } = await collect([modify(id, 1.08)], deps, s);
     expect(results[0]).toMatchObject({ outcome: "done", message: "done (confirmed late)", attempts: 1 });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("F3: close does NOT wait on a stuck request (idempotent): it resends after backoff and finishes fast", async () => {
+    const { s, broker, deps } = setup();
+    const id = seedBuy(broker);
+    scripted(broker, "closePosition", { settled: new Promise<TradeResult>(() => undefined) });
+    const t0 = s.now();
+    const { results } = await collect([close(id)], deps, s);
+    expect(results[0]).toMatchObject({ outcome: "done", attempts: 2 });
+    expect(s.now() - t0).toBeLessThan(2_000);
+  });
+
+  it("modify that timed out with no way to learn the outcome → unknown, not resent blind", async () => {
+    const { s, broker, deps } = setup();
+    scripted(broker, "modifyPosition", { op: "modify" });
+    const spy = vi.spyOn(broker, "modifyPosition");
+    const { results } = await collect([modify(seedBuy(broker), 1.08)], deps, s);
+    expect(results[0]).toMatchObject({ outcome: "unknown", attempts: 1 });
+    expect(results[0]?.message).toMatch(/timed out with no confirmation/);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   it("late final failure → failed with that reason", async () => {
@@ -630,9 +693,53 @@ describe("ADR-0009: entries with an unknown outcome are never doubled", () => {
     expect(results[0]).toMatchObject({
       outcome: "done",
       partial: true,
-      message: "partially filled (R6.7)",
+      message: "partially filled (R6.7), volume unknown: check",
       positionId: "77",
     });
+  });
+
+  it("R6.7: a partial fill reports the volume that actually filled", async () => {
+    const { s, broker, deps } = setup();
+    broker.seedPosition({
+      id: "88",
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 0.04,
+      openPrice: 1.0861,
+      sl: 1.08,
+      tp: null,
+      magic: 1,
+    });
+    scripted(broker, "placeMarket", {
+      op: "market",
+      ok: true,
+      class: "success",
+      code: RETCODE.DONE_PARTIAL,
+      stringCode: "TRADE_RETCODE_DONE_PARTIAL",
+      positionId: "88",
+    });
+    const { results } = await collect([market("c16")], deps, s);
+    expect(results[0]).toMatchObject({
+      partial: true,
+      filledVolume: 0.04,
+      message: "partially filled (R6.7): 0.04 of 0.1 lots",
+    });
+  });
+
+  it("R6.7: if the volume can't be read, say so", async () => {
+    const { s, broker, deps } = setup();
+    vi.spyOn(broker, "getPositions").mockRejectedValue(new Error("down"));
+    scripted(broker, "placeMarket", {
+      op: "market",
+      ok: true,
+      class: "success",
+      code: RETCODE.DONE_PARTIAL,
+      stringCode: "TRADE_RETCODE_DONE_PARTIAL",
+      positionId: "1",
+    });
+    expect((await collect([market("c17")], deps, s)).results[0]?.message).toBe(
+      "partially filled (R6.7), volume unknown: check",
+    );
   });
 
   it("property: random faults, lost replies and delays never double a position or exceed 3 attempts", async () => {
@@ -720,17 +827,6 @@ describe("coverage of the remaining paths", () => {
     expect(results[0]?.message).toBe("TRADE_RETCODE_TRADE_DISABLED: Trade disabled");
   });
 
-  it("re-validates a TP-only modify too", async () => {
-    const { s, broker, deps } = setup({ faults: { modify: [{ rate: 1, code: RETCODE.REQUOTE }] } });
-    const id = seedBuy(broker, { tp: 1.09 });
-    const { results } = await collect(
-      [modify(id, null, 1.09)],
-      { ...deps, revalidate: makeRevalidator(broker) },
-      s,
-    );
-    expect(results[0]).toMatchObject({ outcome: "done", message: "already at these levels" });
-  });
-
   it("a reconcile answer missing the id counts as not found", async () => {
     const { s, broker, deps } = setup();
     scripted(broker, "placeMarket", { op: "market", class: "ambiguous", code: LOCAL_CODE.UNKNOWN_ERROR });
@@ -772,8 +868,232 @@ describe("Channel", () => {
     expect(await it.next()).toEqual({ value: 2, done: false });
     const pending = it.next();
     ch.close();
+    ch.close(); // idempotent
     ch.push(3);
     expect(await pending).toEqual({ value: undefined, done: true });
     expect(await it.next()).toEqual({ value: undefined, done: true });
+  });
+});
+
+describe("Phase 04 board review findings", () => {
+  it("F1: abort during retry backoff → no further attempts; a sent-then-aborted item is failed, not done", async () => {
+    const { s, broker, deps } = setup({ faults: { market: [{ rate: 1, code: RETCODE.REQUOTE }] } });
+    const ac = new AbortController();
+    const spy = vi.spyOn(broker, "placeMarket");
+    // The owner aborts as soon as the first attempt comes back (requote), i.e. during the backoff.
+    const { results } = await collect(
+      [market("ab1")],
+      {
+        ...deps,
+        signal: ac.signal,
+        onCall: () => {
+          ac.abort();
+        },
+      },
+      s,
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(results[0]).toMatchObject({ outcome: "failed", attempts: 1 });
+    expect(results[0]?.message).toMatch(/^aborted before retry/);
+  });
+
+  it("abort while waiting for credits → nothing sent, skipped", async () => {
+    const { s, broker, deps } = setup();
+    const ac = new AbortController();
+    ac.abort();
+    const limiter = new CreditLimiter({ capacity: 5000, windowMs: 10_000, maxInFlight: 8, scheduler: s });
+    limiter.pauseFor(1_000);
+    const items = [close(seedBuy(broker))];
+    const { results } = await collect(items, { ...deps, limiter, signal: ac.signal }, s);
+    expect(results[0]).toMatchObject({ outcome: "skipped", attempts: 0 });
+    expect(broker.calls).toHaveLength(0);
+  });
+
+  it("F4: a 429 that arrives late via `settled` pauses everyone for its retry time", async () => {
+    const { s, broker, deps } = setup();
+    const id = seedBuy(broker);
+    const late: TradeResult = {
+      op: "modify",
+      ok: false,
+      class: "retryable",
+      code: LOCAL_CODE.RATE_LIMITED,
+      stringCode: "RATE_LIMITED",
+      message: "",
+      latencyMs: 1,
+      retryAfterMs: 5_000,
+    };
+    scripted(broker, "modifyPosition", { op: "modify", settled: Promise.resolve(late) });
+    const { results } = await collect([modify(id, 1.08)], deps, s);
+    expect(results[0]).toMatchObject({ outcome: "done", attempts: 2 });
+    const gap = (broker.calls[0]?.at ?? 0) - 1_763_769_600_000;
+    expect(gap).toBeGreaterThanOrEqual(5_000);
+  });
+
+  it("F5: two positions found for one entry → unknown 'duplicate', never a clean done", async () => {
+    const { s, broker, deps } = setup();
+    for (const id of ["p1", "p2"]) {
+      broker.seedPosition({
+        id,
+        symbol: "EURUSD",
+        side: "BUY",
+        volume: 0.1,
+        openPrice: 1.0861,
+        sl: 1.08,
+        tp: null,
+        magic: 1,
+        clientId: "dup1",
+      });
+    }
+    scripted(broker, "placeMarket", { op: "market", class: "ambiguous", code: LOCAL_CODE.UNKNOWN_ERROR });
+    const { results } = await collect([market("dup1")], deps, s);
+    expect(results[0]).toMatchObject({
+      outcome: "unknown",
+      message: "duplicate positions for one entry (p1, p2): check manually",
+    });
+  });
+
+  it("the same target twice in one plan: the copy is refused before anything is sent", async () => {
+    const { s, broker, deps } = setup();
+    const id = seedBuy(broker);
+    const { results } = await collect([market("same"), close(id), market("same"), close(id)], deps, s);
+    expect(results.map((r) => r.outcome)).toEqual(["done", "done", "skipped", "skipped"]);
+    expect(results[2]?.message).toBe("duplicate of item 0 in this plan: not sent");
+    expect(broker.calls.filter((c) => c.op === "market")).toHaveLength(1);
+  });
+
+  it("reconcilePolls 0 is clamped to 1: reconciliation is never skipped", async () => {
+    const { s, broker, deps } = setup({}, 4, { reconcilePolls: 0 });
+    scripted(broker, "placeMarket", { op: "market", class: "ambiguous", code: LOCAL_CODE.UNKNOWN_ERROR });
+    const spy = vi.spyOn(broker, "reconcile");
+    const { results } = await collect([market("rp0")], deps, s);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(results[0]?.outcome).toBe("unknown");
+  });
+
+  it("nonsense policy/concurrency values fall back to safe defaults", async () => {
+    const { s, broker, deps } = setup({}, Number.NaN, {
+      maxAttempts: Number.NaN,
+      jitter: Number.NaN,
+      baseDelayMs: -5,
+    });
+    const { results, summary } = await collect([close(seedBuy(broker)), close(seedBuy(broker))], deps, s);
+    expect(results.map((r) => r.outcome)).toEqual(["done", "done"]);
+    expect(summary.finished).toBe(2);
+  });
+
+  it("a cost the limiter can never fit → failed with nothing sent", async () => {
+    const { s, broker, deps } = setup();
+    const { results } = await collect([close(seedBuy(broker))], { ...deps, costPerTrade: 1e9 }, s);
+    expect(results[0]).toMatchObject({ outcome: "failed", attempts: 0, code: null });
+    expect(results[0]?.message).toMatch(/^can't send: cost/);
+    expect(broker.calls).toHaveLength(0);
+  });
+
+  it("a throwing logger can't turn a confirmed trade into 'unknown', and the 429 pause still applies", async () => {
+    const { s, broker, deps } = setup();
+    const { results } = await collect(
+      [close(seedBuy(broker))],
+      {
+        ...deps,
+        onCall: () => {
+          throw new Error("log down");
+        },
+      },
+      s,
+    );
+    expect(results[0]?.outcome).toBe("done");
+  });
+
+  it("SRE: a hung broker can't stall the batch: settle waits run off the workers", async () => {
+    const { s, broker, deps } = setup({}, 2, { settleTimeoutMs: 30_000 });
+    const ids = Array.from({ length: 6 }, () => seedBuy(broker));
+    for (let i = 0; i < 6; i++) {
+      vi.spyOn(broker, "modifyPosition").mockResolvedValueOnce({
+        op: "modify",
+        ok: false,
+        class: "retryable",
+        code: LOCAL_CODE.ADAPTER_TIMEOUT,
+        stringCode: "ADAPTER_TIMEOUT",
+        message: "",
+        latencyMs: 5,
+        settled: new Promise<TradeResult>(() => undefined),
+      });
+    }
+    const t0 = s.now();
+    const { results } = await collect(
+      ids.map((id) => modify(id, 1.08)),
+      deps,
+      s,
+    );
+    expect(results.every((r) => r.outcome === "unknown")).toBe(true);
+    // 6 hung items on 2 workers: in parallel ≈ one settle window, not 3 × 30 s.
+    expect(s.now() - t0).toBeLessThan(35_000);
+  });
+
+  it("zombies count against the in-flight cap while they may still be live", async () => {
+    const t = setup({}, 4, { settleTimeoutMs: 10_000 });
+    const limiter = new CreditLimiter({ capacity: 5000, windowMs: 10_000, maxInFlight: 2, scheduler: t.s });
+    vi.spyOn(t.broker, "modifyPosition").mockResolvedValue({
+      op: "modify",
+      ok: false,
+      class: "retryable",
+      code: LOCAL_CODE.ADAPTER_TIMEOUT,
+      stringCode: "ADAPTER_TIMEOUT",
+      message: "",
+      latencyMs: 5,
+      settled: new Promise<TradeResult>(() => undefined),
+    });
+    await collect(
+      Array.from({ length: 4 }, () => modify(seedBuy(t.broker), 1.08)),
+      { ...t.deps, limiter },
+      t.s,
+    );
+    expect(limiter.peakInFlight).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("last-resort guards", () => {
+  it("a 'settled' that breaks its never-reject contract ends the item as unknown", async () => {
+    const { s, broker, deps } = setup();
+    scripted(broker, "modifyPosition", {
+      op: "modify",
+      settled: Promise.reject(new Error("contract broken")),
+    });
+    const { results } = await collect([modify(seedBuy(broker), 1.08)], deps, s);
+    expect(results[0]).toMatchObject({ outcome: "unknown", attempts: 1 });
+  });
+
+  it("if the run itself crashes, the stream still ends (no consumer waits forever)", async () => {
+    const { broker, deps } = setup();
+    const broken = {
+      ...deps,
+      scheduler: {
+        now: () => {
+          throw new Error("clock broke");
+        },
+        sleep: () => Promise.resolve(),
+      },
+    };
+    const events: ExecEvent[] = [];
+    for await (const e of execute([close(seedBuy(broker))], broken)) events.push(e);
+    expect(events).toEqual([]);
+  });
+});
+
+describe("Channel limits", () => {
+  it("closes itself when the reader falls too far behind, and return() closes and notifies", async () => {
+    const { Channel } = await import("@/execution/channel");
+    let closed = 0;
+    const ch = new Channel<number>({ maxBuffer: 2, onClose: () => (closed += 1) });
+    ch.push(1);
+    ch.push(2);
+    ch.push(3);
+    expect(ch.overflowed).toBe(true);
+    expect(closed).toBe(1);
+    const other = new Channel<number>({ onClose: () => (closed += 1) });
+    other.push(1);
+    expect(await other[Symbol.asyncIterator]().return?.()).toEqual({ value: undefined, done: true });
+    expect(closed).toBe(2);
+    expect(other.overflowed).toBe(false);
   });
 });

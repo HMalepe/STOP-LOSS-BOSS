@@ -3,7 +3,7 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 04 (execution engine) ⬜, next up
+- Phase: 05 (auth and security) ⬜, next up
 - Current milestone: none
 - Blockers: **Q2** (Exness demo connected to MetaApi) for the live [T] tests in Phase 03. MockBroker and adapter code can start without it
 
@@ -14,7 +14,7 @@
 | 01 | Foundation | ✅ | 81 tests, clean clone passes `pnpm verify`, E2E on 390×844, CI workflow |
 | 02 | Domain core | ✅ | 294 tests, domain 100% lines / 99% branches, fuzzed. Safety review: 1 critical + 1 high found and fixed |
 | 03 | Broker adapter | ✅ | 460 tests. SDK contract verified from the package. Board review (architect, trading systems, SRE): 1 critical, 8 high/must-fix fixed. Live demo contract run pending Q2 |
-| 04 | Execution engine | ⬜ | Limiter is credit-based (09). Carry-overs below |
+| 04 | Execution engine | ✅ | 554 tests + `pnpm load` (1,000 close-now 22 s, 0 duplicates). Board review (safety, SRE, QA): all critical/high fixed |
 | 05 | Auth and security | ⬜ | |
 | 06 | API routes | ⬜ | |
 | 07 | UI | ⬜ | |
@@ -51,17 +51,24 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - 2026-11-22: Position profit = open part net of swap + commission, rounded to cents (my earlier reading of the SDK was wrong; fixed)
 - 2026-11-22: R7.1 drift guard re-reads untouched levels; R7.2 quote age limit
 - 2026-11-22: MetaApi connection: per-attempt timeout, overall deadline, jittered backoff, fail-fast on auth errors, watchdog reconnect
+- 2026-11-22: Limiter is a sliding window (a token bucket allows 2× in a window), two lanes: close-now is urgent
+- 2026-11-22: Close-now aborts other running executions on start
+- 2026-11-22: Settle waits run off the workers; timed-out requests keep their in-flight slot; close/cancel never wait on settled
+- 2026-11-22: R7.1: modify items carry `before`; either level changed → skipped
+- 2026-11-22: Event stream: sequence numbers for resume, bounded subscriber buffers, history released after 1 h
 - 2026-11-21: Deferred: R1.1 batch filter → Phase 08 with R9.1; stale-quote check → drift guard §7 (Phase 04/06)
 
-## Phase 04 carry-overs (from the Phase 03 board review)
-- Executor waits on `settled` and follows ADR-0009 for every ambiguous entry; property tests for "never a double entry"
-- MockBroker: delayed landing of a lost-reply entry (fills N s later) to test the zombie path end to end
-- R7.1 untouched-level re-read and R7.2 quote age in the drift guard; `getSnapshot(symbol)` read in one tick
-- R6.7 partial entry fills: re-read volume
-- Structured log line per broker call (op, planId, item, clientId, code, class, latency); SDK logger at info+
-- `createBroker()` factory that fails closed: account `tradeMode` must match TRADING_MODE (demo app never drives a REAL account)
-- Market-data subscriptions: unsubscribe unused symbols; check credit cost
-- Later (Phase 06/09): lenient close-now parse, health routes, graceful shutdown, metrics/alerts, history lookup by clientId
+## Carry-overs to Phase 05/06 (from the Phase 03 and 04 board reviews)
+- **Persistence and restart recovery**: execution row + per-item intent ("sending") before each send, result after; on boot mark running
+  executions interrupted, items still "sending" → unknown, entries reconciled by clientId. DB unique constraint on executions.plan_id.
+- **Graceful shutdown**: stop accepting work, abort all, drain in-flight and settling (~15 s), close the broker, flush audit.
+- **Drift guard at execute** (R7.1 with `before`, R7.2 quote age, §7) on the execute route; items loaded from the stored plan only.
+- **Circuit breaker**: after K consecutive NOT_CONNECTED/timeouts, probe health, fail the rest fast ("broker unavailable").
+- **Observability**: typed event hook for limiter waits, pauses, settles, reconcile polls, revalidate, abort; item wall time; metrics + alerts
+  (any unknown > 0, long executions, error rate, breaker open). SDK logger at info+.
+- **createBroker() factory** failing closed: account tradeMode must match TRADING_MODE.
+- Lenient close-now parse (one bad row must not block the panic button); health routes; history lookup by clientId (Phase 09).
+- ADR-0010 one-request panic close: verify on demo first.
 
 ## Open questions for the owner
 - **Q2** (needed by Phase 03) Is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet? R0.2 detects netting at runtime anyway.

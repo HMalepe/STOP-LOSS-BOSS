@@ -192,7 +192,16 @@ describe("plan builder: breakeven and lock", () => {
     const plan = okPlan(
       buildPlan({ action: "breakeven", filter, offsetPoints: 10 }, snap([good, near, better])),
     );
-    expect(plan.items).toEqual([{ op: "modify", positionId: good.id, side: "BUY", sl: 1.0851, tp: null }]);
+    expect(plan.items).toEqual([
+      {
+        op: "modify",
+        positionId: good.id,
+        side: "BUY",
+        sl: 1.0851,
+        tp: null,
+        before: { sl: null, tp: null },
+      },
+    ]);
     expect(plan.skipped).toEqual(
       expect.arrayContaining([
         { id: near.id, reason: "not far enough in profit" },

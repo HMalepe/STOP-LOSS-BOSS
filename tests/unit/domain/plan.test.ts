@@ -451,3 +451,11 @@ describe("determinism and speed", () => {
     expect(perPlan).toBeLessThan(100);
   });
 });
+
+describe("R7.1: modify items carry the levels the preview saw", () => {
+  it("before = the position's levels at preview, on the point grid", () => {
+    const pos = position("BUY", { sl: 1.07, tp: 1.0900100000000001 });
+    const plan = ok(buildPlan({ action: "levels", filter: ALL, stopLoss: 1.08 }, snap([pos])));
+    expect(modifies(plan.items)[0]?.before).toEqual({ sl: 1.07, tp: 1.09001 });
+  });
+});

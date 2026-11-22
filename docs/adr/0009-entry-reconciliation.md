@@ -15,3 +15,13 @@ up as ORDER_TYPE_BUY/SELL in the orders list, not as positions. The stream also 
    Phase 09 addition; until then they are "unknown, check manually".
 **Consequences:** A rare unknown needs a human glance, which is far cheaper than an unintended double position. The executor's
 retry logic for entries is the strictest path in the system and gets its own property tests.
+
+## Amendments (2026-11-22, Phase 04 board review)
+- Settle waits and reconcile polls run **off the worker**: an item that must wait frees its worker for the next item, and the run waits
+  for it before completing. A hung broker can no longer stall a 1,000-item close-now for an hour.
+- A timed-out request keeps its **in-flight slot** until it settles or the window passes, so the cap reflects what MetaApi really has.
+- **close/cancel never wait on `settled`**: closing by ticket is idempotent, so they resend after backoff and the book check decides.
+- **modify** waits on `settled`; a modify timeout with no `settled` ends "unknown" (a blind resend could land after a newer plan).
+- Reconcile finding **more than one** ticket for a clientId ends "unknown: duplicate", never a clean "done".
+- A plan containing the same target twice: later copies are refused before anything is sent.
+- `reconcilePolls` is clamped to at least 1.

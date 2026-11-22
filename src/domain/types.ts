@@ -86,6 +86,8 @@ export type PlanItem =
       readonly side: Side;
       readonly sl: Price | null;
       readonly tp: Price | null;
+      /** R7.1: the levels the preview saw. A retry/execute is skipped if the live position no longer matches. */
+      readonly before: { readonly sl: Price | null; readonly tp: Price | null };
     }
   | {
       readonly op: "close";
