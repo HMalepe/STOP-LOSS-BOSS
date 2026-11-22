@@ -31,11 +31,19 @@ export function brokerContract(
   const timeout = opts.timeoutMs ?? 5_000;
 
   describe(`BrokerProvider contract: ${name}`, () => {
-    let t: ContractTarget;
+    let target: ContractTarget | undefined;
     let spec: SymbolSpec;
 
+    /** The target, or a clear failure if setup didn't complete. */
+    const tgt = (): ContractTarget => {
+      if (target === undefined) throw new Error("contract setup did not complete");
+      return target;
+    };
+
     const ours = async (): Promise<Position[]> =>
-      (await t.broker.getPositions()).filter((p) => p.symbol === t.symbol && p.magic === CONTRACT_MAGIC);
+      (await tgt().broker.getPositions()).filter(
+        (p) => p.symbol === tgt().symbol && p.magic === CONTRACT_MAGIC,
+      );
 
     /** A price `pts` points away from `from`, on the tick grid. */
     const away = (from: number, pts: number) =>
@@ -45,22 +53,24 @@ export function brokerContract(
     const gap = () => Math.max(500, (spec.stopsLevel + spec.freezeLevel) * 3 + 50);
 
     beforeAll(async () => {
-      t = await setup();
-      const account = await t.broker.getAccount();
+      target = await setup();
+      const account = await target.broker.getAccount();
       if (account.tradeMode !== "DEMO") {
         throw new Error(`Contract suite refuses to trade: account is ${account.tradeMode}, not DEMO.`);
       }
-      spec = await t.broker.getSymbolSpec(t.symbol);
+      spec = await target.broker.getSymbolSpec(target.symbol);
     }, 180_000);
 
     afterAll(async () => {
-      if (t === undefined) return;
+      if (target === undefined) return;
+      const t = target;
       for (const p of await ours().catch(() => [])) await t.broker.closePosition(p.id);
       const orders = await t.broker.getOrders().catch(() => []);
       for (const o of orders.filter((x) => x.magic === CONTRACT_MAGIC)) await t.broker.cancelOrder(o.id);
     }, 120_000);
 
     it("is connected and synchronized", async () => {
+      const t = tgt();
       expect(await t.broker.health()).toEqual({
         connected: true,
         connectedToBroker: true,
@@ -69,10 +79,12 @@ export function brokerContract(
     });
 
     it("R0.2: reports a known margin mode (HEDGING needed for batches)", async () => {
+      const t = tgt();
       expect(["HEDGING", "NETTING", "EXCHANGE"]).toContain((await t.broker.getAccount()).marginMode);
     });
 
     it("spec is usable (R0.1) and the quote is sane", async () => {
+      const t = tgt();
       expect(specProblems(spec)).toEqual([]);
       const q = await t.broker.getQuote(t.symbol);
       expect(q.symbol).toBe(t.symbol);
@@ -83,6 +95,7 @@ export function brokerContract(
     it(
       "full position lifecycle: entry with stop + tag, preserve, no-op, invalid stops, close, close again",
       async () => {
+        const t = tgt();
         const q = await t.broker.getQuote(t.symbol);
         const sl = away(q.bid, -gap());
         const entry = await t.broker.placeMarket({
@@ -140,6 +153,7 @@ export function brokerContract(
     it(
       "pending order lifecycle: place far from price, appears tagged, cancel, cancel again fails",
       async () => {
+        const t = tgt();
         const q = await t.broker.getQuote(t.symbol);
         const placed = await t.broker.placePending({
           symbol: t.symbol,
@@ -167,6 +181,7 @@ export function brokerContract(
     it(
       "R5.3: an entry with an invalid stop is refused, and nothing opens",
       async () => {
+        const t = tgt();
         const q = await t.broker.getQuote(t.symbol);
         const r = await t.broker.placeMarket({
           symbol: t.symbol,
