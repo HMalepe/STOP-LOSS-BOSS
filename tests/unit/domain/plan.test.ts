@@ -146,6 +146,8 @@ describe("§1 filters", () => {
   it("R4.8 orders: symbol, side via type, magic; in-profit-only ignored", () => {
     expect(pendingSide("BUY_STOP")).toBe("BUY");
     expect(pendingSide("SELL_LIMIT")).toBe("SELL");
+    expect(pendingSide("BUY_STOP_LIMIT")).toBe("BUY");
+    expect(pendingSide("SELL_STOP_LIMIT")).toBe("SELL");
     expect(matchesOrder(order(), { ...ALL, inProfitOnly: true })).toBe(true);
     expect(matchesOrder(order(), { ...ALL, side: "SELL" })).toBe(false);
     expect(matchesOrder(order({ type: "SELL_STOP" }), { ...ALL, side: "SELL" })).toBe(true);

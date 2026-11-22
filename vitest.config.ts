@@ -11,13 +11,14 @@ export default defineConfig({
     restoreMocks: true,
     coverage: {
       provider: "v8",
-      include: ["src/domain/**/*.ts", "src/execution/**/*.ts", "src/server/**/*.ts"],
+      include: ["src/domain/**/*.ts", "src/execution/**/*.ts", "src/server/**/*.ts", "src/broker/**/*.ts"],
       reporter: ["text", "html"],
       thresholds: {
         // CLAUDE.md non-negotiable 10: money logic is held to 95%+.
         "src/domain/**": STRICT,
         "src/execution/**": STRICT,
         "src/server/**": { branches: 85, functions: 85, lines: 85, statements: 85 },
+        "src/broker/**": { branches: 90, functions: 90, lines: 90, statements: 90 },
       },
     },
   },

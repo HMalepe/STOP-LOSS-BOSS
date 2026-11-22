@@ -52,7 +52,8 @@ export interface Position {
   readonly comment?: string;
 }
 
-export type PendingType = "BUY_LIMIT" | "BUY_STOP" | "SELL_LIMIT" | "SELL_STOP";
+export type PendingType =
+  "BUY_LIMIT" | "BUY_STOP" | "BUY_STOP_LIMIT" | "SELL_LIMIT" | "SELL_STOP" | "SELL_STOP_LIMIT";
 
 export interface PendingOrder {
   readonly id: string;

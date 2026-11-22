@@ -10,7 +10,7 @@ export function matchesPosition(p: Position, f: PositionFilter): boolean {
 }
 
 export function pendingSide(type: PendingType): Side {
-  return type === "BUY_LIMIT" || type === "BUY_STOP" ? "BUY" : "SELL";
+  return type.startsWith("BUY_") ? "BUY" : "SELL";
 }
 
 /** R4.8: symbol, side and magic apply; inProfitOnly doesn't (orders have no P/L). */
