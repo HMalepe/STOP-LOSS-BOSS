@@ -94,3 +94,17 @@ Read directly from the published package (`dist/**/*.d.ts` and the JS it ships),
 3. Reads during a batch come from `terminalState` (0 credits, no SDK retry stalls). RPC reads are a fallback only.
 4. MetaApi ids are numbers in the SDK types and strings in trade calls; the adapter normalises every id to a string.
 5. R0.2 reads `accountInformation.marginMode`; anything other than RETAIL_HEDGING disables batch entries.
+
+## Measured: `pnpm load` (Phase 04, MockBroker, virtual time)
+Setup: p50 120 ms / p99 900 ms call latency, 5% retryable errors, MetaApi credit limit (5,000 / 10 s, 10 per trade),
+our limiter at 90% of that (4,500 / 10 s), 16 in flight.
+
+| Scenario | Items | Done | Total | Items/s | p50 / p95 call | Retries | Broker 429s | Duplicates |
+|---|---|---|---|---|---|---|---|---|
+| Close-now | 1,000 | 1,000 | 22.1 s | 45 | 113 / 447 ms | 42 | 0 | 0 |
+| Bulk SL, end to end (snapshot → buildPlan → execute) | 1,000 | 1,000 | 22.4 s | 45 | 122 / 496 ms | 58 | 0 | 0 |
+| Entries, 10% lost replies (late or never) | 200 | 200 | 8.1 s | 25 | 139 / 555 ms | 7 | 0 | 0 |
+
+Preview (buildPlan for 1,000 positions): 5.9 ms CPU, budget 800 ms. 100 items finish in about 2.5 s (budget 5 s).
+**Conclusion:** at 1,000 items we are credit-bound, not code-bound, exactly as predicted. The 10% safety margin costs ~2 s.
+The only way to go materially faster on close-now is fewer requests, see ADR-0010.
