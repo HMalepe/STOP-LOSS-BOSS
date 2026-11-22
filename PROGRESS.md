@@ -3,8 +3,8 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 03 (broker adapter) ⬜, next up
-- Current milestone: none
+- Phase: 03 (broker adapter) 🟨
+- Current milestone: M2 interface + schemas
 - Blockers: **Q2** (Exness demo connected to MetaApi) for the live [T] tests in Phase 03. MockBroker and adapter code can start without it
 
 ## Phases
@@ -13,7 +13,7 @@
 | 00 | Kickoff and board review | ✅ | Spec reviewed, MetaApi facts verified, ADR-0004 to 0007. Owner delegated Q1, Q3 to Q5 to Claude |
 | 01 | Foundation | ✅ | 81 tests, clean clone passes `pnpm verify`, E2E on 390×844, CI workflow |
 | 02 | Domain core | ✅ | 294 tests, domain 100% lines / 99% branches, fuzzed. Safety review: 1 critical + 1 high found and fixed |
-| 03 | Broker adapter | ⬜ | Must test the [T] items in 03-TRADING-RULES on demo |
+| 03 | Broker adapter | 🟨 | M1 ✅ SDK contract verified from the package itself (09, ADR-0008) |
 | 04 | Execution engine | ⬜ | Limiter is credit-based (09) |
 | 05 | Auth and security | ⬜ | |
 | 06 | API routes | ⬜ | |
@@ -45,16 +45,17 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - 2026-11-21: Close-now never blocked by spec/quote/bad data/duplicates (R4.7, R0.3, R0.5): it closes by ticket
 - 2026-11-21: Levels ≤ 0 points are plan errors (R0.4): 0 is "remove" on the MT5 wire
 - 2026-11-21: Helper rounding never gives less than asked (R8.4); lock never locks a loss (R8.6)
+- 2026-11-22: Broker wire policy: always send both levels, 0 = none; own timeouts; SDK never retries trades ([ADR-0008](docs/adr/0008-broker-wire-policy.md))
 - 2026-11-21: Deferred: R1.1 batch filter → Phase 08 with R9.1; stale-quote check → drift guard §7 (Phase 04/06)
 
 ## Open questions for the owner
 - **Q2** (needed by Phase 03) Is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet? R0.2 detects netting at runtime anyway.
 
 ## Unverified facts (must be tested on Exness demo via MetaApi, Phase 3)
-- POSITION_MODIFY behaviour when one level is omitted (docs silent)
-- MetaApi accepts and returns `magic` on market/pending orders and positions
-- Field name for account margin mode (hedging vs netting)
-- Field names for tick value / tick size; whether MetaApi exposes broker margin calc
+- ~~POSITION_MODIFY behaviour when one level is omitted~~ no longer matters: we always send both levels (ADR-0008)
+- MetaApi accepts and returns `magic` on orders/positions: **types say yes** (TradeOptions.magic, MetatraderPosition.magic); confirm on demo
+- ~~Field name for account margin mode~~ `accountInformation.marginMode` (verified in SDK types)
+- ~~Tick value / margin calc field names~~ `price.profitTickValue/lossTickValue`, `position.currentTickValue`, `calculateMargin()` (verified)
 - Real trade latency (streaming vs REST), max in-flight trades, Exness stops/freeze levels, max open positions
 - Whether MetaApi deduplicates on `clientId` (would make R6.5 simpler)
 - Does MT5 re-check the preserved (unchanged) level against stopsLevel on TRADE_ACTION_SLTP? (R2.11: warn now, skip if yes)

@@ -59,3 +59,36 @@ Note: the MetaApi rate-limit page has an internal inconsistency (one 429 example
 
 ## Load test
 `pnpm load` runs 1,000 positions on MockBroker configured with the verified limits and prints: total time, p50/p95 per call, retries, max concurrency observed, duplicates (must be 0).
+
+## MetaApi SDK contract (verified 2026-11-22 from `metaapi.cloud-sdk@29.3.4` type definitions and source)
+Read directly from the published package (`dist/**/*.d.ts` and the JS it ships), not from memory or blog posts.
+
+| Item | Verified value | Where |
+|---|---|---|
+| Package / version | `metaapi.cloud-sdk` 29.3.4 (latest) | npm registry |
+| Connect | `new MetaApi(token, { region, requestTimeout, retryOpts })` → `metatraderAccountApi.getAccount(id)` → `account.getStreamingConnection()` → `connect()` → `waitSynchronized()` | `metaApi.d.ts`, `metatraderAccount.d.ts` |
+| Zero-credit reads | `connection.terminalState`: `positions`, `orders`, `specification(symbol)`, `price(symbol)`, `accountInformation`, `connected`, `connectedToBroker` | `terminalState.d.ts` |
+| Health | `connection.healthMonitor.healthStatus`, `.uptime` | `connectionHealthMonitor.d.ts` |
+| Modify | `modifyPosition(positionId, stopLoss?, takeProfit?)`. **An omitted level is omitted from the wire request** (`_generateStopOptions` only sets fields that are numbers). `0` is sent as `0` | `metaApiConnectionInstance.js` |
+| Close / cancel | `closePosition(positionId, options)`, `cancelOrder(orderId)` | same |
+| Entries | `createMarketBuyOrder / createMarketSellOrder(symbol, volume, sl?, tp?, options)`, `createLimit/StopBuy/SellOrder(symbol, volume, openPrice, sl?, tp?, options)` | same |
+| Order options | `comment`, `clientId` (comment + clientId ≤ 26 chars), `magic` (number; else account default), `slippage` (points) | `TradeOptions` in `metaApiConnectionInstance.d.ts` |
+| Success | stringCode ∈ {ERR_NO_ERROR, TRADE_RETCODE_PLACED, _DONE, _DONE_PARTIAL, _NO_CHANGES}; numeric 0, 10008–10010, 10025 | `metaApiWebsocket.client.js` `trade()` |
+| Failure | throws `TradeError { message, numericCode, stringCode }` | `tradeError.d.ts` |
+| SDK retries on **trade** | **None.** `rpcRequest` sends `trade` once (`_makeRequest`), no retry loop | `metaApiWebsocket.client.js` `rpcRequest` |
+| SDK retries on reads | Up to `retryOpts.retries` (default 5) on TooManyRequests (waits for `recommendedRetryTime`), Timeout, NotSynchronized, Internal; backoff up to 30 s | same |
+| Request timeout | Default **60 s** (`requestTimeout`) | `metaApiWebsocket.client.js` constructor |
+| High-reliability accounts | Trade is sent to 2 instances with one random 32-char `requestId` (server-side de-dup) | `rpcRequestAllInstances` |
+| Position fields | `id: number`, `type: POSITION_TYPE_BUY/SELL`, `symbol`, `magic`, `openPrice`, `currentPrice`, `currentTickValue`, `stopLoss?`, `takeProfit?`, `volume`, `profit`, `swap`, `commission`, `comment?`, `clientId?` | `metaApiWebsocket.client.schemas.d.ts` |
+| Order fields | `id: number`, `type: ORDER_TYPE_BUY_LIMIT/…`, `state`, `symbol`, `magic`, `openPrice`, `stopLoss?`, `takeProfit?`, `volume`, `currentVolume`, `clientId?` | same |
+| Spec fields | `symbol`, `digits`, `point`, `tickSize`, `stopsLevel`, `freezeLevel`, `minVolume`, `maxVolume`, `volumeStep`, `contractSize`, `tradeMode?` | same |
+| Price fields | `symbol`, `bid`, `ask`, `profitTickValue`, `lossTickValue`, `time: Date` | same |
+| Account | `marginMode` ∈ {ACCOUNT_MARGIN_MODE_RETAIL_HEDGING, _RETAIL_NETTING, _EXCHANGE}, `balance`, `equity`, `margin`, `freeMargin`, `marginLevel`, `tradeAllowed`, `currency`, `leverage` | same |
+| Margin calc | `calculateMargin(order)` exists (R9.3 can use the broker's number) | `metaApiConnectionInstance.d.ts` |
+
+### Consequences (ADR-0008)
+1. The adapter **always sends both levels as explicit numbers**: the level to keep, or `0` for "none". The undocumented "omitted field" path is never used.
+2. Our executor wraps every trade in its **own** timeout (default 60 s is far too long for a scalper) and treats a timeout on an entry as ambiguous (R6.5).
+3. Reads during a batch come from `terminalState` (0 credits, no SDK retry stalls). RPC reads are a fallback only.
+4. MetaApi ids are numbers in the SDK types and strings in trade calls; the adapter normalises every id to a string.
+5. R0.2 reads `accountInformation.marginMode`; anything other than RETAIL_HEDGING disables batch entries.
