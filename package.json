@@ -21,7 +21,8 @@
     "test:e2e": "playwright test",
     "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:coverage && pnpm build",
     "test:contract": "vitest run tests/contract",
-    "fix": "prettier --write . --log-level warn && eslint . --fix && prettier --write . --log-level warn"
+    "fix": "prettier --write . --log-level warn && eslint . --fix && prettier --write . --log-level warn",
+    "load": "vitest run --config vitest.load.config.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

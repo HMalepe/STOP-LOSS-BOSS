@@ -25,6 +25,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify (typecheck, lint, format, unit + coverage gates, build)
         run: pnpm verify
+      - name: Load test (1,000 items, virtual time)
+        run: pnpm load
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
       - name: E2E on a phone viewport
