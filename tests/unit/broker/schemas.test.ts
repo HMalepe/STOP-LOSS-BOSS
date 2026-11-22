@@ -159,6 +159,7 @@ describe("spec, price, account", () => {
       freeMargin: 1010,
       leverage: 500,
       marginMode: "ACCOUNT_MARGIN_MODE_RETAIL_HEDGING",
+      type: "ACCOUNT_TRADE_MODE_DEMO",
       tradeAllowed: true,
     };
     expect(parseOne(metaApiAccount, raw, "account")).toMatchObject({
@@ -245,5 +246,33 @@ describe("toTradeResult", () => {
       ok: false,
       class: "ambiguous",
     });
+  });
+});
+
+describe("account type (demo vs real guard)", () => {
+  const raw = {
+    currency: "USD",
+    balance: 1,
+    equity: 1,
+    margin: 0,
+    freeMargin: 1,
+    leverage: 1,
+    marginMode: "ACCOUNT_MARGIN_MODE_RETAIL_HEDGING",
+    tradeAllowed: true,
+  };
+
+  it.each([
+    ["ACCOUNT_TRADE_MODE_DEMO", "DEMO"],
+    ["ACCOUNT_TRADE_MODE_CONTEST", "CONTEST"],
+    ["ACCOUNT_TRADE_MODE_REAL", "REAL"],
+  ])("%s → %s", (type, mode) => {
+    expect(parseOne(metaApiAccount, { ...raw, type }, "account").tradeMode).toBe(mode);
+  });
+
+  it("an unknown account type is an error, never assumed to be demo", () => {
+    expect(() => parseOne(metaApiAccount, { ...raw, type: "PROBABLY_DEMO" }, "account")).toThrow(
+      /unknown account type/,
+    );
+    expect(() => parseOne(metaApiAccount, raw, "account")).toThrow(/type/);
   });
 });

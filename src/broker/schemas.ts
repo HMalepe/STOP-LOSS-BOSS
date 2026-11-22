@@ -5,7 +5,7 @@
  */
 import { z } from "zod";
 import type { PendingOrder, PendingType, Position, Quote, SymbolSpec } from "@/domain/types";
-import type { AccountInfo, MarginMode, TradeResult } from "./BrokerProvider";
+import type { AccountInfo, AccountTradeMode, MarginMode, TradeResult } from "./BrokerProvider";
 import { classify, codeFromString, codeName, type BrokerOp } from "./retcodes";
 import { BrokerError } from "./BrokerProvider";
 
@@ -123,6 +123,12 @@ const MARGIN_MODES: Record<string, MarginMode> = {
   ACCOUNT_MARGIN_MODE_EXCHANGE: "EXCHANGE",
 };
 
+const TRADE_MODES: Record<string, AccountTradeMode> = {
+  ACCOUNT_TRADE_MODE_DEMO: "DEMO",
+  ACCOUNT_TRADE_MODE_CONTEST: "CONTEST",
+  ACCOUNT_TRADE_MODE_REAL: "REAL",
+};
+
 export const metaApiAccount = z
   .object({
     currency: z.string(),
@@ -133,6 +139,8 @@ export const metaApiAccount = z
     marginLevel: z.number().optional(),
     leverage: z.number(),
     marginMode: z.string().refine((m) => m in MARGIN_MODES, "unknown margin mode"),
+    // An unknown account type is an error, never assumed to be demo.
+    type: z.string().refine((t) => t in TRADE_MODES, "unknown account type"),
     tradeAllowed: z.boolean(),
   })
   .transform((a): AccountInfo => ({
@@ -145,6 +153,8 @@ export const metaApiAccount = z
     leverage: a.leverage,
     // refine above guarantees the key exists.
     marginMode: MARGIN_MODES[a.marginMode] ?? "EXCHANGE",
+    // refine above guarantees the key exists; REAL is the safe fallback for type narrowing.
+    tradeMode: TRADE_MODES[a.type] ?? "REAL",
     tradeAllowed: a.tradeAllowed,
   }));
 

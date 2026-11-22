@@ -11,6 +11,7 @@ import type { PendingOrder, PendingType, Position, Quote, Side, SymbolSpec } fro
 import {
   BrokerError,
   type AccountInfo,
+  type AccountTradeMode,
   type BrokerHealth,
   type BrokerProvider,
   type Levels,
@@ -72,6 +73,7 @@ export interface MockBrokerOptions {
     readonly currency: string;
     readonly leverage: number;
     readonly marginMode: MarginMode;
+    readonly tradeMode?: AccountTradeMode;
   };
   readonly maxPositions?: number;
   readonly maxPendingOrders?: number;
@@ -216,6 +218,7 @@ export class MockBroker implements BrokerProvider {
         marginLevel: margin === 0 ? null : (equity / margin) * 100,
         leverage: this.#leverage(),
         marginMode: this.#opts.account?.marginMode ?? "HEDGING",
+        tradeMode: this.#opts.account?.tradeMode ?? "DEMO",
         tradeAllowed: true,
       };
     });

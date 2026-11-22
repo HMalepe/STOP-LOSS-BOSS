@@ -50,6 +50,7 @@ const rawAccount = {
   marginLevel: 4776,
   leverage: 500,
   marginMode: "ACCOUNT_MARGIN_MODE_RETAIL_HEDGING",
+  type: "ACCOUNT_TRADE_MODE_DEMO",
   tradeAllowed: true,
 };
 

@@ -12,6 +12,9 @@ import type { BrokerOp, TradeClass } from "./retcodes";
 
 export type MarginMode = "HEDGING" | "NETTING" | "EXCHANGE";
 
+/** What the broker says the account is. Checked against TRADING_MODE so a "demo" app can never drive a REAL account. */
+export type AccountTradeMode = "DEMO" | "CONTEST" | "REAL";
+
 export interface AccountInfo {
   readonly currency: string;
   readonly balance: number;
@@ -22,6 +25,7 @@ export interface AccountInfo {
   readonly marginLevel: number | null;
   readonly leverage: number;
   readonly marginMode: MarginMode;
+  readonly tradeMode: AccountTradeMode;
   readonly tradeAllowed: boolean;
 }
 
