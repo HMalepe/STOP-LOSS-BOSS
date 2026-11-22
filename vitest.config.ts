@@ -12,6 +12,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/domain/**/*.ts", "src/execution/**/*.ts", "src/server/**/*.ts", "src/broker/**/*.ts"],
+      // Needs a real MetaApi account: covered by the contract suite when demo creds are set, not by unit tests.
+      exclude: ["src/broker/metaapi/sdk.ts"],
       reporter: ["text", "html"],
       thresholds: {
         // CLAUDE.md non-negotiable 10: money logic is held to 95%+.

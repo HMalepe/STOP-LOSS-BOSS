@@ -13,6 +13,8 @@ const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   typedRoutes: true,
+  // Server-only, CommonJS, loaded with require(): never bundle it.
+  serverExternalPackages: ["metaapi.cloud-sdk"],
   headers: () => Promise.resolve([{ source: "/:path*", headers: securityHeaders }]),
 };
 
