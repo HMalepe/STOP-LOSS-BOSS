@@ -101,8 +101,8 @@ export class BrokerError extends Error {
 
 /** R6.5 / ADR-0009: where an entry with this clientId ended up. */
 export type Reconciled =
-  | { readonly status: "position"; readonly positionIds: readonly string[] }
-  | { readonly status: "order"; readonly orderIds: readonly string[] }
+  | { readonly status: "position"; readonly positionIds: readonly [string, ...string[]] }
+  | { readonly status: "order"; readonly orderIds: readonly [string, ...string[]] }
   /** A market order still being processed: it may yet become a position. Never retry over it. */
   | { readonly status: "inFlight" }
   | { readonly status: "notFound" };

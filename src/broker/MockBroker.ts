@@ -62,6 +62,11 @@ export interface MockBrokerOptions {
   readonly faults?: Partial<Record<BrokerOp, readonly Fault[]>>;
   /** Entries only: the order executes but the reply is lost (R6.5). */
   readonly lostReplyRate?: number;
+  /**
+   * Zombie model (ADR-0009): with a lost reply, the order only becomes visible after this many ms (it shows as "in flight"
+   * meanwhile), and `settled` resolves then. Infinity = the request is stuck: never lands, never settles. Default 0 = immediate.
+   */
+  readonly lostReplyDelayMs?: number;
   /** MetaApi credits (09-PERFORMANCE). null = no limit. */
   readonly rateLimit?: {
     readonly capacity: number;
@@ -137,6 +142,8 @@ export class MockBroker implements BrokerProvider {
   #creditsUsed = 0;
   #beforeCall: ((call: { index: number; op: BrokerOp; target: string }) => void) | undefined;
   readonly #inFlight = new Set<string>();
+  /** Tickets that exist but aren't visible yet (zombie model). */
+  readonly #hidden = new Set<string>();
 
   constructor(opts: MockBrokerOptions) {
     this.#opts = opts;
@@ -224,35 +231,39 @@ export class MockBroker implements BrokerProvider {
 
   getPositions(): Promise<Position[]> {
     return this.#read(() =>
-      [...this.#positions.values()].map((p) => ({
-        id: p.id,
-        symbol: p.symbol,
-        side: p.side,
-        volume: p.volume,
-        openPrice: p.openPrice,
-        sl: p.sl,
-        tp: p.tp,
-        profit: this.#profit(p),
-        magic: p.magic,
-        ...(p.comment === "" ? {} : { comment: p.comment }),
-        ...(p.clientId === "" ? {} : { clientId: p.clientId }),
-      })),
+      [...this.#positions.values()]
+        .filter((p) => !this.#hidden.has(p.id))
+        .map((p) => ({
+          id: p.id,
+          symbol: p.symbol,
+          side: p.side,
+          volume: p.volume,
+          openPrice: p.openPrice,
+          sl: p.sl,
+          tp: p.tp,
+          profit: this.#profit(p),
+          magic: p.magic,
+          ...(p.comment === "" ? {} : { comment: p.comment }),
+          ...(p.clientId === "" ? {} : { clientId: p.clientId }),
+        })),
     );
   }
 
   getOrders(): Promise<PendingOrder[]> {
     return this.#read(() =>
-      [...this.#orders.values()].map((o) => ({
-        id: o.id,
-        symbol: o.symbol,
-        type: o.type,
-        volume: o.volume,
-        openPrice: o.openPrice,
-        sl: o.sl,
-        tp: o.tp,
-        magic: o.magic,
-        ...(o.clientId === "" ? {} : { clientId: o.clientId }),
-      })),
+      [...this.#orders.values()]
+        .filter((o) => !this.#hidden.has(o.id))
+        .map((o) => ({
+          id: o.id,
+          symbol: o.symbol,
+          type: o.type,
+          volume: o.volume,
+          openPrice: o.openPrice,
+          sl: o.sl,
+          tp: o.tp,
+          magic: o.magic,
+          ...(o.clientId === "" ? {} : { clientId: o.clientId }),
+        })),
     );
   }
 
@@ -470,7 +481,21 @@ export class MockBroker implements BrokerProvider {
         latencyMs,
         ...ids(),
       };
-      return finish(LOCAL_CODE.ADAPTER_TIMEOUT, { settled: Promise.resolve(real) });
+      const delay = this.#opts.lostReplyDelayMs ?? 0;
+      if (delay === 0) return finish(LOCAL_CODE.ADAPTER_TIMEOUT, { settled: Promise.resolve(real) });
+      // It landed at the broker, but nobody can see it yet: hidden from reads, "in flight" for reconcile.
+      const ticket = real.positionId ?? real.orderId ?? "";
+      const clientId = target;
+      this.#hidden.add(ticket);
+      this.#inFlight.add(clientId);
+      const settled: Promise<TradeResult> = Number.isFinite(delay)
+        ? (this.#opts.sleep ?? (() => Promise.resolve()))(delay).then(() => {
+            this.#hidden.delete(ticket);
+            this.#inFlight.delete(clientId);
+            return real;
+          })
+        : new Promise<TradeResult>(() => undefined);
+      return finish(LOCAL_CODE.ADAPTER_TIMEOUT, { settled });
     }
     return finish(code, ids());
   }
