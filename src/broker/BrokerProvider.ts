@@ -36,6 +36,8 @@ export interface TradeResult {
   readonly latencyMs: number;
   readonly orderId?: string;
   readonly positionId?: string;
+  /** R6.2: when rate limited, how long to wait before anyone sends again. */
+  readonly retryAfterMs?: number;
 }
 
 export interface Levels {
