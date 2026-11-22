@@ -95,6 +95,8 @@ const isEntry = (op: BrokerOp) => op === "market" || op === "pending";
 
 /** §6 classification. Unknown codes are final (R6.4). */
 export function classify(code: number, op: BrokerOp): TradeClass {
+  // A partial close leaves volume open: not done. Sending close by ticket again closes the rest.
+  if (code === RETCODE.DONE_PARTIAL && op === "close") return "retryable";
   if (SUCCESS.has(code)) return "success";
   // R4.5: closing something already closed is the outcome we wanted.
   if (code === RETCODE.POSITION_CLOSED) return op === "close" ? "success" : "final";

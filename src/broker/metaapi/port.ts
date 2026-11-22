@@ -25,7 +25,7 @@ export interface MetaApiConnectionPort {
   readonly synchronized: boolean;
   subscribeToMarketData(symbol: string): Promise<unknown>;
   modifyPosition(positionId: string, stopLoss: number, takeProfit: number): Promise<unknown>;
-  closePosition(positionId: string, options: Record<string, never>): Promise<unknown>;
+  closePosition(positionId: string): Promise<unknown>;
   cancelOrder(orderId: string): Promise<unknown>;
   createMarketBuyOrder(
     symbol: string,

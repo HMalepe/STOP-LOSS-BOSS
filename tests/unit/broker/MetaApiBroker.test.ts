@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  closeSharedMetaApiBroker,
   MetaApiBroker,
   resetSharedMetaApiBroker,
   sharedMetaApiBroker,
@@ -91,6 +92,7 @@ const tag = { magic: 7731000000009, comment: "OD:x", clientId: "p1" };
 const market = { ...tag, symbol: "EURUSD", side: "BUY" as const, volume: 0.1, sl: 1.08, tp: null };
 
 afterEach(() => {
+  vi.useRealTimers();
   resetSharedMetaApiBroker();
 });
 
@@ -180,7 +182,7 @@ describe("trades: wire format (ADR-0008)", () => {
     const conn = fake();
     const b = new MetaApiBroker(conn);
     expect((await b.closePosition("11")).op).toBe("close");
-    expect(conn.closePosition).toHaveBeenCalledWith("11", {});
+    expect(conn.closePosition).toHaveBeenCalledWith("11");
     expect((await b.cancelOrder("21")).op).toBe("cancel");
     expect(conn.cancelOrder).toHaveBeenCalledWith("21");
   });
@@ -303,10 +305,51 @@ describe("trades: every failure is a result, never a throw", () => {
     }
   });
 
-  it("not-synchronized style errors → NOT_CONNECTED", async () => {
+  it("server-side not-connected errors are UNKNOWN outcomes: ambiguous for entries (may have run)", async () => {
     const conn = fake();
     conn.cancelOrder.mockRejectedValue(named("NotSynchronizedError"));
-    expect((await new MetaApiBroker(conn).cancelOrder("21")).code).toBe(LOCAL_CODE.NOT_CONNECTED);
+    conn.createMarketBuyOrder.mockRejectedValue(named("NotConnectedError"));
+    const b = new MetaApiBroker(conn);
+    expect(await b.cancelOrder("21")).toMatchObject({ code: LOCAL_CODE.UNKNOWN_ERROR, class: "retryable" });
+    expect(await b.placeMarket(market)).toMatchObject({ code: LOCAL_CODE.UNKNOWN_ERROR, class: "ambiguous" });
+  });
+
+  it("our precheck needs a synchronized stream too; nothing is sent otherwise", async () => {
+    const conn = fake({ synchronized: false });
+    expect(await new MetaApiBroker(conn).placeMarket(market)).toMatchObject({
+      code: LOCAL_CODE.NOT_CONNECTED,
+      class: "retryable",
+    });
+    expect(conn.createMarketBuyOrder).not.toHaveBeenCalled();
+  });
+
+  it("zombie guard: after our timeout, `settled` delivers the real late outcome", async () => {
+    const conn = fake();
+    let land: (v: unknown) => void = () => undefined;
+    conn.createMarketBuyOrder.mockImplementation(() => new Promise((r) => (land = r)));
+    const r = await new MetaApiBroker(conn, { tradeTimeoutMs: 10 }).placeMarket(market);
+    expect(r).toMatchObject({ class: "ambiguous", code: LOCAL_CODE.ADAPTER_TIMEOUT });
+    expect(r.settled).toBeInstanceOf(Promise);
+    land(done);
+    expect(await r.settled).toMatchObject({ ok: true, code: 10009, positionId: "1" });
+  });
+
+  it("zombie guard: a late failure settles as a result too (never rejects)", async () => {
+    const conn = fake();
+    let fail: (e: unknown) => void = () => undefined;
+    conn.modifyPosition.mockImplementation(() => new Promise((_, rej) => (fail = rej)));
+    const r = await new MetaApiBroker(conn, { tradeTimeoutMs: 10 }).modifyPosition("11", { sl: 1, tp: null });
+    fail(
+      Object.assign(new Error("Invalid stops"), {
+        numericCode: 10016,
+        stringCode: "TRADE_RETCODE_INVALID_STOPS",
+      }),
+    );
+    expect(await r.settled).toMatchObject({ ok: false, code: 10016, class: "final" });
+  });
+
+  it("a normal answer carries no `settled`", async () => {
+    expect(await new MetaApiBroker(fake()).closePosition("11")).not.toHaveProperty("settled");
   });
 
   it("anything else → UNKNOWN_ERROR: ambiguous for an entry, retryable for a close", async () => {
@@ -341,6 +384,7 @@ describe("connect with backoff, one connection per process", () => {
       ++calls < 3 ? Promise.reject(named("NotConnectedError")) : Promise.resolve(fake());
     const b = await MetaApiBroker.connect(factory, {
       baseDelayMs: 1000,
+      random: () => 0.5,
       sleep: (ms) => (delays.push(ms), Promise.resolve()),
     });
     expect(b.name).toBe("metaapi");
@@ -354,6 +398,8 @@ describe("connect with backoff, one connection per process", () => {
       MetaApiBroker.connect(factory, {
         attempts: 7,
         baseDelayMs: 1000,
+        random: () => 0.5,
+        deadlineMs: 10 * 60_000,
         sleep: (ms) => (delays.push(ms), Promise.resolve()),
       }),
     ).rejects.toMatchObject({
@@ -362,7 +408,7 @@ describe("connect with backoff, one connection per process", () => {
     });
     expect(delays).toEqual([1000, 2000, 4000, 8000, 16000, 30000]);
     await expect(MetaApiBroker.connect(() => Promise.reject(named("")), { attempts: 1 })).rejects.toThrow(
-      /attempts: error/,
+      /1 attempt: error/,
     );
   });
 
@@ -371,7 +417,7 @@ describe("connect with backoff, one connection per process", () => {
     let calls = 0;
     const p = MetaApiBroker.connect(
       () => (++calls < 2 ? Promise.reject(new Error("x")) : Promise.resolve(fake())),
-      { baseDelayMs: 50 },
+      { baseDelayMs: 50, random: () => 0.5 },
     );
     await vi.advanceTimersByTimeAsync(50);
     expect((await p).name).toBe("metaapi");
@@ -398,5 +444,119 @@ describe("withTimeout", () => {
     expect(await withTimeout(Promise.resolve(5), 50)).toBe(5);
     await expect(withTimeout(never(), 5)).rejects.toBeInstanceOf(AdapterTimeout);
     await expect(withTimeout(never(), 5)).rejects.toThrow("no answer within 5 ms");
+  });
+});
+
+describe("connect hardening (SRE review)", () => {
+  it("fails fast on errors retrying can't fix (bad token, unknown account)", async () => {
+    const factory = vi.fn(() => Promise.reject(named("UnauthorizedError")));
+    await expect(MetaApiBroker.connect(factory, { sleep: () => Promise.resolve() })).rejects.toThrow(
+      "after 1 attempt: UnauthorizedError",
+    );
+    expect(factory).toHaveBeenCalledTimes(1);
+  });
+
+  it("a slow attempt times out, and if it connects later it is closed, not leaked", async () => {
+    const late = fake();
+    let resolveFirst: (c: MetaApiConnectionPort) => void = () => undefined;
+    let calls = 0;
+    const factory = () =>
+      ++calls === 1 ? new Promise<MetaApiConnectionPort>((r) => (resolveFirst = r)) : Promise.resolve(fake());
+    const b = await MetaApiBroker.connect(factory, { attemptTimeoutMs: 10, sleep: () => Promise.resolve() });
+    expect(b.name).toBe("metaapi");
+    resolveFirst(late);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(late.close).toHaveBeenCalled();
+  });
+
+  it("stops retrying when the next wait would pass the overall deadline", async () => {
+    let t = 0;
+    const factory = vi.fn(() => {
+      t += 50_000;
+      return Promise.reject(named("NotConnectedError"));
+    });
+    await expect(
+      MetaApiBroker.connect(factory, {
+        attempts: 10,
+        baseDelayMs: 20_000,
+        deadlineMs: 120_000,
+        now: () => t,
+        random: () => 0.5,
+        sleep: (ms) => ((t += ms), Promise.resolve()),
+      }),
+    ).rejects.toThrow(/after 2 attempts/);
+  });
+
+  it("jitters the backoff within ±20%", async () => {
+    const delays: number[] = [];
+    const run = (random: () => number) =>
+      MetaApiBroker.connect(() => Promise.reject(named("X")), {
+        attempts: 2,
+        baseDelayMs: 1000,
+        random,
+        sleep: (ms) => (delays.push(ms), Promise.resolve()),
+      }).catch(() => undefined);
+    await run(() => 0);
+    await run(() => 1);
+    expect(delays).toEqual([800, 1200]);
+  });
+});
+
+describe("watchdog and shutdown (SRE review)", () => {
+  it("drops a connection unhealthy for longer than the limit; the next caller reconnects", async () => {
+    vi.useFakeTimers();
+    let t = 0;
+    const first = fake();
+    const second = fake();
+    const factory = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    const drops: string[] = [];
+    const opts = {
+      watchdog: {
+        intervalMs: 1_000,
+        unhealthyForMs: 3_000,
+        now: () => t,
+        onDrop: (r: string) => drops.push(r),
+      },
+    };
+    const a = await sharedMetaApiBroker(factory, opts);
+
+    first.terminalState.connectedToBroker = false;
+    for (let i = 0; i < 5; i++) {
+      t += 1_000;
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(first.close).toHaveBeenCalled();
+    expect(drops).toHaveLength(1);
+    const b = await sharedMetaApiBroker(factory, opts);
+    expect(b).not.toBe(a);
+    expect(factory).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("a short blip doesn't drop the connection", async () => {
+    vi.useFakeTimers();
+    let t = 0;
+    const conn = fake();
+    await sharedMetaApiBroker(() => Promise.resolve(conn), {
+      watchdog: { intervalMs: 1_000, unhealthyForMs: 3_000, now: () => t },
+    });
+    conn.terminalState.connected = false;
+    t += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    conn.terminalState.connected = true;
+    for (let i = 0; i < 5; i++) {
+      t += 1_000;
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(conn.close).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("closeSharedMetaApiBroker closes the connection; safe with none open", async () => {
+    const conn = fake();
+    await sharedMetaApiBroker(() => Promise.resolve(conn), { watchdog: false });
+    await closeSharedMetaApiBroker();
+    expect(conn.close).toHaveBeenCalled();
+    await expect(closeSharedMetaApiBroker()).resolves.toBeUndefined();
   });
 });

@@ -44,6 +44,7 @@ describe("positions", () => {
       profit: 9,
       magic: 7731000000042,
       comment: "OD:k3x9",
+      clientId: "p7Xa0001",
     });
   });
 
@@ -274,5 +275,23 @@ describe("account type (demo vs real guard)", () => {
       /unknown account type/,
     );
     expect(() => parseOne(metaApiAccount, raw, "account")).toThrow(/type/);
+  });
+});
+
+describe("clientId round-trip (R6.5)", () => {
+  it("positions and orders keep a non-empty clientId; an empty one is dropped", () => {
+    expect(parseOne(metaApiPosition, rawPosition, "position").clientId).toBe("p7Xa0001");
+    expect(parseOne(metaApiPosition, { ...rawPosition, clientId: "" }, "position")).not.toHaveProperty(
+      "clientId",
+    );
+    const order = {
+      id: 1,
+      type: "ORDER_TYPE_BUY_LIMIT",
+      symbol: "EURUSD",
+      openPrice: 1.08,
+      volume: 0.1,
+      clientId: "c9",
+    };
+    expect(parseOne(metaApiOrder, order, "order")?.clientId).toBe("c9");
   });
 });

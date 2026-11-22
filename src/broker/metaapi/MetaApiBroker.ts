@@ -40,10 +40,28 @@ export interface MetaApiBrokerOptions {
 export interface ConnectOptions {
   readonly attempts?: number;
   readonly baseDelayMs?: number;
+  /** Max time for one attempt (account lookup + connect + sync). */
+  readonly attemptTimeoutMs?: number;
+  /** Max time for the whole connect, across attempts. */
+  readonly deadlineMs?: number;
   readonly sleep?: (ms: number) => Promise<void>;
+  /** 0..1, for backoff jitter. */
+  readonly random?: () => number;
 }
 
-const NOT_CONNECTED_ERRORS = new Set(["NotConnectedError", "NotSynchronizedError", "NotAuthenticatedError"]);
+/** Server said "not connected" after we sent: the request may or may not have run. Not the same as our precheck. */
+const SERVER_NOT_CONNECTED_ERRORS = new Set([
+  "NotConnectedError",
+  "NotSynchronizedError",
+  "NotAuthenticatedError",
+]);
+/** Retrying won't help: bad token, wrong account id, bad config. */
+const FATAL_CONNECT_ERRORS = new Set([
+  "UnauthorizedError",
+  "NotFoundError",
+  "ValidationError",
+  "ForbiddenError",
+]);
 
 function hasCode(e: unknown): e is { numericCode?: unknown; stringCode?: unknown } {
   return typeof e === "object" && e !== null && ("numericCode" in e || "stringCode" in e);
@@ -67,26 +85,43 @@ export class MetaApiBroker implements BrokerProvider {
     this.#now = opts.now ?? (() => Date.now());
   }
 
-  /** Connect with exponential backoff. The factory opens and synchronizes one SDK connection. */
+  /**
+   * Connect with jittered exponential backoff, a per-attempt timeout and an overall deadline.
+   * Fails fast on errors retrying can't fix. An attempt that times out but connects later is closed, not leaked.
+   */
   static async connect(
     factory: () => Promise<MetaApiConnectionPort>,
     opts: MetaApiBrokerOptions & ConnectOptions = {},
   ): Promise<MetaApiBroker> {
     const attempts = opts.attempts ?? 5;
     const base = opts.baseDelayMs ?? 1_000;
+    const attemptTimeoutMs = opts.attemptTimeoutMs ?? 60_000;
+    const deadlineMs = opts.deadlineMs ?? 180_000;
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const random = opts.random ?? Math.random;
+    const now = opts.now ?? (() => Date.now());
+    const started = now();
     let last: unknown;
+    let tried = 0;
     for (let i = 0; i < attempts; i++) {
+      tried += 1;
+      const pending = factory();
       try {
-        return new MetaApiBroker(await factory(), opts);
+        return new MetaApiBroker(await withTimeout(pending, attemptTimeoutMs), opts);
       } catch (e) {
         last = e;
-        if (i < attempts - 1) await sleep(Math.min(base * 2 ** i, 30_000));
+        // A slow attempt may still connect: close it when it does, so it doesn't leak a websocket.
+        if (e instanceof AdapterTimeout) pending.then((c) => c.close()).catch(() => undefined);
+        if (FATAL_CONNECT_ERRORS.has(errorName(e))) break;
+        if (i === attempts - 1) break;
+        const delay = Math.round(Math.min(base * 2 ** i, 30_000) * (0.8 + 0.4 * random()));
+        if (now() - started + delay > deadlineMs) break;
+        await sleep(delay);
       }
     }
     throw new BrokerError(
       "NOT_CONNECTED",
-      `MetaApi connection failed after ${String(attempts)} attempts: ${errorName(last) || "error"}`,
+      `MetaApi connection failed after ${String(tried)} attempt${tried === 1 ? "" : "s"}: ${errorName(last) || "error"}`,
     );
   }
 
@@ -153,7 +188,7 @@ export class MetaApiBroker implements BrokerProvider {
   }
 
   closePosition(positionId: string): Promise<TradeResult> {
-    return this.#trade("close", () => this.#conn.closePosition(positionId, {}));
+    return this.#trade("close", () => this.#conn.closePosition(positionId));
   }
 
   cancelOrder(orderId: string): Promise<TradeResult> {
@@ -199,10 +234,14 @@ export class MetaApiBroker implements BrokerProvider {
 
   // ---------- internals ----------
 
+  /** Reads need the whole chain up: our socket, MetaApi's link to the broker, and a synchronized state. Else it may be stale. */
   #assertReady(): void {
     const ts = this.#conn.terminalState;
-    if (!ts.connected || !this.#conn.synchronized) {
-      throw new BrokerError("NOT_CONNECTED", "MetaApi stream is not connected and synchronized");
+    if (!ts.connected || !ts.connectedToBroker || !this.#conn.synchronized) {
+      throw new BrokerError(
+        "NOT_CONNECTED",
+        "MetaApi stream is not connected, linked to the broker and synchronized",
+      );
     }
   }
 
@@ -217,21 +256,40 @@ export class MetaApiBroker implements BrokerProvider {
 
   async #trade(op: BrokerOp, send: () => Promise<unknown>): Promise<TradeResult> {
     const ts = this.#conn.terminalState;
-    if (!ts.connected || !ts.connectedToBroker) {
+    if (!ts.connected || !ts.connectedToBroker || !this.#conn.synchronized) {
       // Nothing was sent, so this is safe to retry even for entries.
       return this.#local(op, LOCAL_CODE.NOT_CONNECTED, "not connected to the broker", 0);
     }
     const start = this.#now();
+    const work = send();
+    // The real outcome, whenever it arrives. Never rejects. Also keeps a late rejection from going unhandled.
+    const late = work.then(
+      (raw) => toTradeResult(op, raw, this.#now() - start),
+      (e: unknown) => this.#fromError(op, e, this.#now() - start),
+    );
     try {
-      const raw = await withTimeout(send(), this.#tradeTimeoutMs);
+      const raw = await withTimeout(work, this.#tradeTimeoutMs);
       return toTradeResult(op, raw, this.#now() - start);
     } catch (e) {
+      if (e instanceof AdapterTimeout) {
+        // Zombie risk: the SDK may still send this after reconnecting. Hand the executor the real outcome to wait on.
+        return {
+          ...this.#local(
+            op,
+            LOCAL_CODE.ADAPTER_TIMEOUT,
+            "no answer in time: outcome unknown",
+            this.#now() - start,
+          ),
+          settled: late,
+        };
+      }
       return this.#fromError(op, e, this.#now() - start);
     }
   }
 
   #fromError(op: BrokerOp, e: unknown, latencyMs: number): TradeResult {
-    if (e instanceof AdapterTimeout || errorName(e) === "TimeoutError") {
+    if (errorName(e) === "TimeoutError") {
+      // MetaApi's own timeout: it gave up waiting, but the terminal may have executed it.
       return this.#local(op, LOCAL_CODE.ADAPTER_TIMEOUT, "no answer in time: outcome unknown", latencyMs);
     }
     if (errorName(e) === "TooManyRequestsError") {
@@ -241,8 +299,9 @@ export class MetaApiBroker implements BrokerProvider {
       const retryAfterMs = Number.isFinite(when) ? Math.max(0, when - this.#now()) : 1_000;
       return { ...this.#local(op, LOCAL_CODE.RATE_LIMITED, "MetaApi rate limit", latencyMs), retryAfterMs };
     }
-    if (NOT_CONNECTED_ERRORS.has(errorName(e))) {
-      return this.#local(op, LOCAL_CODE.NOT_CONNECTED, errorName(e), latencyMs);
+    if (SERVER_NOT_CONNECTED_ERRORS.has(errorName(e))) {
+      // Undocumented whether the request ran: unknown outcome (ambiguous for entries), unlike our own precheck.
+      return this.#local(op, LOCAL_CODE.UNKNOWN_ERROR, errorName(e), latencyMs);
     }
     if (hasCode(e)) {
       // SDK TradeError: { message, numericCode, stringCode }.

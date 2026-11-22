@@ -4,9 +4,15 @@ import { classify, codeFromString, codeName, LOCAL_CODE, RETCODE, type BrokerOp 
 const ALL_OPS: BrokerOp[] = ["modify", "close", "cancel", "market", "pending"];
 
 describe("§6 classification", () => {
-  it.each([0, 10008, 10009, 10010, 10025])("%i is success for every op (MetaApi success set)", (code) => {
-    for (const op of ALL_OPS) expect(classify(code, op)).toBe("success");
-  });
+  it.each([0, 10008, 10009, 10010, 10025])(
+    "%i is success for every op except a partial close (MetaApi success set)",
+    (code) => {
+      for (const op of ALL_OPS) {
+        if (code === 10010 && op === "close") continue;
+        expect(classify(code, op)).toBe("success");
+      }
+    },
+  );
 
   it.each([
     RETCODE.REQUOTE,
@@ -29,6 +35,11 @@ describe("§6 classification", () => {
       expect(classify(code, "cancel")).toBe("retryable");
     },
   );
+
+  it("a partial close (DONE_PARTIAL) is not done: retryable, so the rest gets closed", () => {
+    expect(classify(RETCODE.DONE_PARTIAL, "close")).toBe("retryable");
+    expect(classify(RETCODE.DONE_PARTIAL, "market")).toBe("success");
+  });
 
   it("R4.5: POSITION_CLOSED is success for close, final for anything else", () => {
     expect(classify(RETCODE.POSITION_CLOSED, "close")).toBe("success");

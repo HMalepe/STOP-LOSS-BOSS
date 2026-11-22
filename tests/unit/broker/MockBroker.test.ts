@@ -209,7 +209,10 @@ describe("market entries", () => {
     expect(r.positionId).toBeDefined();
     const [p] = await b.getPositions();
     expect(p).toMatchObject({ openPrice: 1.0861, sl: 1.08, tp: 1.09, magic: tag.magic, comment: "OD:abc" });
-    expect(b.positionsByClientId("pl1x0")).toEqual([r.positionId]);
+    // R6.5: the clientId comes back on the position, so reconciliation can find it through the interface.
+    expect((await b.getPositions()).filter((x) => x.clientId === "pl1x0").map((x) => x.id)).toEqual([
+      r.positionId,
+    ]);
   });
 
   it("validates the stop against the closing side: sell SL vs ask", async () => {
@@ -241,7 +244,11 @@ describe("market entries", () => {
     const { b } = broker({ lostReplyRate: 1 });
     const r = await b.placeMarket(buy);
     expect(r).toMatchObject({ ok: false, class: "ambiguous", code: LOCAL_CODE.ADAPTER_TIMEOUT });
-    expect(b.positionsByClientId("pl1x0")).toHaveLength(1);
+    expect((await b.getPositions()).filter((x) => x.clientId === "pl1x0")).toHaveLength(1);
+    // Zombie model: the real outcome arrives later, and it says DONE with the ticket.
+    const real = await r.settled;
+    expect(real).toMatchObject({ ok: true, code: RETCODE.DONE });
+    expect(real?.positionId).toBeDefined();
   });
 
   it("lost replies only hit entries that would have succeeded", async () => {
@@ -415,5 +422,32 @@ describe("faults, connection, recorder, account", () => {
     expect(() => {
       b.setQuote("XYZ", 1, 1);
     }).toThrow(/unknown symbol/);
+  });
+});
+
+describe("clientId on reads (R6.5 via the interface)", () => {
+  it("pending orders carry their clientId too", async () => {
+    const { b } = broker();
+    await b.placePending({
+      ...tag,
+      clientId: "pl1x9",
+      symbol: "EURUSD",
+      type: "BUY_LIMIT",
+      volume: 0.1,
+      openPrice: 1.08,
+      sl: null,
+      tp: null,
+    });
+    expect((await b.getOrders())[0]?.clientId).toBe("pl1x9");
+    b.seedOrder({
+      symbol: "EURUSD",
+      type: "SELL_LIMIT",
+      volume: 0.1,
+      openPrice: 1.09,
+      sl: null,
+      tp: null,
+      magic: 0,
+    });
+    expect((await b.getOrders())[1]).not.toHaveProperty("clientId");
   });
 });

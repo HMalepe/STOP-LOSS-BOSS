@@ -37,6 +37,7 @@ export const metaApiPosition = z
     /** MetaApi profit already includes swap and commission. */
     profit: z.number(),
     comment: z.string().optional(),
+    clientId: z.string().optional(),
   })
   .transform((p): Position => ({
     id: p.id,
@@ -49,6 +50,7 @@ export const metaApiPosition = z
     profit: p.profit,
     magic: p.magic ?? 0,
     ...(p.comment === undefined ? {} : { comment: p.comment }),
+    ...(p.clientId === undefined || p.clientId === "" ? {} : { clientId: p.clientId }),
   }));
 
 const PENDING_TYPES = {
@@ -71,6 +73,7 @@ export const metaApiOrder = z
     takeProfit: level,
     volume: z.number(),
     currentVolume: z.number().optional(),
+    clientId: z.string().optional(),
   })
   .transform((o): PendingOrder | null => {
     // Market orders in flight and CLOSE_BY orders aren't pending orders we manage.
@@ -85,6 +88,7 @@ export const metaApiOrder = z
       sl: o.stopLoss,
       tp: o.takeProfit,
       magic: o.magic ?? 0,
+      ...(o.clientId === undefined || o.clientId === "" ? {} : { clientId: o.clientId }),
     };
   });
 

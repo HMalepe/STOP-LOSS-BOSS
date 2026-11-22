@@ -190,11 +190,6 @@ export class MockBroker implements BrokerProvider {
     this.#positions.delete(positionId);
   }
 
-  /** Raw view including clientId, for reconciliation tests (R6.5). */
-  positionsByClientId(clientId: string): string[] {
-    return [...this.#positions.values()].filter((p) => p.clientId === clientId).map((p) => p.id);
-  }
-
   // ---------- reads (free, like MetaApi terminalState) ----------
 
   health(): Promise<BrokerHealth> {
@@ -237,6 +232,7 @@ export class MockBroker implements BrokerProvider {
         profit: this.#profit(p),
         magic: p.magic,
         ...(p.comment === "" ? {} : { comment: p.comment }),
+        ...(p.clientId === "" ? {} : { clientId: p.clientId }),
       })),
     );
   }
@@ -252,6 +248,7 @@ export class MockBroker implements BrokerProvider {
         sl: o.sl,
         tp: o.tp,
         magic: o.magic,
+        ...(o.clientId === "" ? {} : { clientId: o.clientId }),
       })),
     );
   }
@@ -435,8 +432,18 @@ export class MockBroker implements BrokerProvider {
     const code = apply();
     const isEntry = op === "market" || op === "pending";
     if (isEntry && classify(code, op) === "success" && this.#random() < (this.#opts.lostReplyRate ?? 0)) {
-      // It happened at the broker, but we never heard back.
-      return finish(LOCAL_CODE.ADAPTER_TIMEOUT);
+      // It happened at the broker, but we never heard back in time. The real outcome arrives later (zombie model).
+      const real: TradeResult = {
+        op,
+        ok: true,
+        class: "success",
+        code,
+        stringCode: codeName(code),
+        message: "",
+        latencyMs,
+        ...ids(),
+      };
+      return finish(LOCAL_CODE.ADAPTER_TIMEOUT, { settled: Promise.resolve(real) });
     }
     return finish(code, ids());
   }

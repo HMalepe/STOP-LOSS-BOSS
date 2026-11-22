@@ -50,6 +50,8 @@ export interface Position {
   readonly profit: number;
   readonly magic: number;
   readonly comment?: string;
+  /** R6.5 reconciliation key set at entry (MetaApi clientId). */
+  readonly clientId?: string;
 }
 
 export type PendingType =
@@ -64,6 +66,8 @@ export interface PendingOrder {
   readonly sl: number | null;
   readonly tp: number | null;
   readonly magic: number;
+  /** R6.5 reconciliation key set at entry (MetaApi clientId). */
+  readonly clientId?: string;
 }
 
 /** §1 */

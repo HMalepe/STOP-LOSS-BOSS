@@ -42,6 +42,13 @@ export interface TradeResult {
   readonly positionId?: string;
   /** R6.2: when rate limited, how long to wait before anyone sends again. */
   readonly retryAfterMs?: number;
+  /**
+   * Present only when OUR timeout fired while the request was still in flight ("zombie" risk): the SDK may still
+   * send it later. Resolves (never rejects) with the real outcome once known. The executor must not retry or
+   * reconcile this item until it settles (or a late deadline passes, after which the item is "unknown, check
+   * manually", never retried). Not serialisable: strip before storing.
+   */
+  readonly settled?: Promise<TradeResult>;
 }
 
 export interface Levels {
