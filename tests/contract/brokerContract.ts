@@ -23,6 +23,12 @@ export interface ContractTarget {
 /** A magic number nothing else uses, so cleanup can never touch the owner's own trades. */
 const CONTRACT_MAGIC = 9_007_000_000_001;
 
+/** Observations from a real run, printed at the end so they can be pasted into docs/09-PERFORMANCE.md. */
+const observed: string[] = [];
+function record(what: string, code: number, stringCode: string): void {
+  observed.push(`${what}: ${String(code)} ${stringCode}`);
+}
+
 export function brokerContract(
   name: string,
   setup: () => Promise<ContractTarget>,
@@ -62,6 +68,10 @@ export function brokerContract(
     }, 180_000);
 
     afterAll(async () => {
+      if (observed.length > 0 && name !== "MockBroker") {
+        // Facts for the [T] list. Not a secret: codes only.
+        process.stdout.write(`\n[contract ${name}] observed codes:\n  ${observed.join("\n  ")}\n`);
+      }
       if (target === undefined) return;
       const t = target;
       for (const p of await ours().catch(() => [])) await t.broker.closePosition(p.id);
@@ -76,6 +86,17 @@ export function brokerContract(
         connectedToBroker: true,
         synchronized: true,
       });
+    });
+
+    it("R2.9 / R2.11 can only be checked on a symbol with non-zero stops/freeze levels", async () => {
+      const t = tgt();
+      const s = await t.broker.getSymbolSpec(t.symbol);
+      if (s.stopsLevel === 0 && s.freezeLevel === 0 && name !== "MockBroker") {
+        process.stdout.write(
+          `\n[contract ${name}] ${t.symbol} has stopsLevel = freezeLevel = 0: R2.9/R2.11 not exercised. Set CONTRACT_SYMBOL to one with levels.\n`,
+        );
+      }
+      expect(s.stopsLevel).toBeGreaterThanOrEqual(0);
     });
 
     it("R0.2: reports a known margin mode (HEDGING needed for batches)", async () => {
@@ -117,6 +138,13 @@ export function brokerContract(
         expect(pos).toBeDefined();
         const id = pos!.id;
         expect(pos!.magic).toBe(CONTRACT_MAGIC);
+        // [T] clientId round-trips (R6.5 reconciliation depends on it), and reconcile finds it through the interface.
+        expect(pos!.clientId).toBe("ct0001");
+        expect((await t.broker.reconcile(["ct0001", "ct-none"])).get("ct0001")).toEqual({
+          status: "position",
+          positionIds: [id],
+        });
+        expect((await t.broker.reconcile(["ct-none"])).get("ct-none")).toEqual({ status: "notFound" });
         expect(toPoints(pos!.sl!, spec)).toBe(toPoints(sl, spec));
         expect(pos!.tp).toBeNull();
 
@@ -136,6 +164,13 @@ export function brokerContract(
         // R2.8: sending the same levels again is a success (NO_CHANGES or DONE), never an error.
         expect((await t.broker.modifyPosition(id, { sl: sl2, tp })).ok).toBe(true);
 
+        // [T] ADR-0008 rests on this: sending 0 for a level REMOVES it.
+        expect((await t.broker.modifyPosition(id, { sl: sl2, tp: null })).ok).toBe(true);
+        await t.settle();
+        expect((await ours()).find((p) => p.id === id)?.tp).toBeNull();
+        expect((await t.broker.modifyPosition(id, { sl: sl2, tp })).ok).toBe(true);
+        await t.settle();
+
         // R2.1: an SL above the bid is refused with INVALID_STOPS and changes nothing.
         const bad = await t.broker.modifyPosition(id, { sl: away(q.bid, gap()), tp });
         expect(bad).toMatchObject({ ok: false, class: "final", code: RETCODE.INVALID_STOPS });
@@ -146,6 +181,8 @@ export function brokerContract(
         expect(await ours()).toEqual([]);
         const again = await t.broker.closePosition(id);
         expect(again.ok).toBe(true);
+        // [T] Record what the broker really returns for a second close (the mock says 10036).
+        record("close twice", again.code, again.stringCode);
       },
       timeout,
     );
@@ -174,6 +211,8 @@ export function brokerContract(
         await t.settle();
         const twice = await t.broker.cancelOrder(order!.id);
         expect(twice.ok).toBe(false);
+        // [T] The mock says 10035 INVALID_ORDER for this; record the real answer.
+        record("cancel twice", twice.code, twice.stringCode);
       },
       timeout,
     );
@@ -193,7 +232,8 @@ export function brokerContract(
           comment: "OD:contract",
           clientId: "ct0003",
         });
-        expect(r.ok).toBe(false);
+        expect(r).toMatchObject({ ok: false, class: "final" });
+        record("entry with invalid stop", r.code, r.stringCode);
         await t.settle();
         expect(await ours()).toEqual([]);
       },

@@ -14,11 +14,14 @@ import {
   type Levels,
   type MarketOrderReq,
   type PendingOrderReq,
+  type Reconciled,
   type TradeResult,
 } from "../BrokerProvider";
+import { reconcileFrom } from "../reconcile";
 import { classify, codeName, LOCAL_CODE, RETCODE, type BrokerOp } from "../retcodes";
 import {
   metaApiAccount,
+  metaApiInFlight,
   metaApiOrder,
   metaApiPosition,
   metaApiPrice,
@@ -187,8 +190,38 @@ export class MetaApiBroker implements BrokerProvider {
     return this.#trade("modify", () => this.#conn.modifyPosition(positionId, levels.sl ?? 0, levels.tp ?? 0));
   }
 
-  closePosition(positionId: string): Promise<TradeResult> {
-    return this.#trade("close", () => this.#conn.closePosition(positionId));
+  /**
+   * Close by ticket. After any failure, check the book: if the ticket is gone, it IS closed (R4.5), whatever the
+   * code said (10013 "invalid", NotFound, a timeout that landed...). Only trusted when the stream is synchronized.
+   */
+  async closePosition(positionId: string): Promise<TradeResult> {
+    const result = await this.#trade("close", () => this.#conn.closePosition(positionId));
+    if (result.ok || !this.#conn.synchronized || this.#onBook(positionId)) return result;
+    return {
+      op: "close",
+      ok: true,
+      class: "success",
+      code: RETCODE.POSITION_CLOSED,
+      stringCode: codeName(RETCODE.POSITION_CLOSED),
+      message: `already closed (not on the book; broker said ${result.stringCode})`,
+      latencyMs: result.latencyMs,
+    };
+  }
+
+  /** R6.5 / ADR-0009: where did each clientId end up? Includes market orders still in flight. */
+  reconcile(clientIds: readonly string[]): Promise<ReadonlyMap<string, Reconciled>> {
+    return this.#read(() => {
+      const ts = this.#conn.terminalState;
+      const positions = parseList(metaApiPosition, ts.positions, "positions");
+      const rawOrders = Array.isArray(ts.orders) ? (ts.orders as unknown[]) : [];
+      const orders = parseList(metaApiOrder, rawOrders, "orders").filter(
+        (o): o is PendingOrder => o !== null,
+      );
+      const inFlight = new Set(
+        parseList(metaApiInFlight, rawOrders, "orders").filter((c): c is string => c !== null),
+      );
+      return reconcileFrom(clientIds, positions, orders, inFlight);
+    });
   }
 
   cancelOrder(orderId: string): Promise<TradeResult> {
@@ -254,9 +287,23 @@ export class MetaApiBroker implements BrokerProvider {
     }
   }
 
+  /** Lenient: just looks for the ticket, so odd data elsewhere can't hide it. */
+  #onBook(positionId: string): boolean {
+    const raw = this.#conn.terminalState.positions;
+    return (
+      Array.isArray(raw) &&
+      raw.some(
+        (p: unknown) =>
+          typeof p === "object" && p !== null && String((p as { id?: unknown }).id) === positionId,
+      )
+    );
+  }
+
   async #trade(op: BrokerOp, send: () => Promise<unknown>): Promise<TradeResult> {
     const ts = this.#conn.terminalState;
-    if (!ts.connected || !ts.connectedToBroker || !this.#conn.synchronized) {
+    // Close/cancel by ticket only need the broker link; a resync must not block the panic button.
+    const needsSync = op !== "close" && op !== "cancel";
+    if (!ts.connected || !ts.connectedToBroker || (needsSync && !this.#conn.synchronized)) {
       // Nothing was sent, so this is safe to retry even for entries.
       return this.#local(op, LOCAL_CODE.NOT_CONNECTED, "not connected to the broker", 0);
     }
@@ -298,6 +345,15 @@ export class MetaApiBroker implements BrokerProvider {
       const when = at instanceof Date ? at.getTime() : typeof at === "string" ? Date.parse(at) : Number.NaN;
       const retryAfterMs = Number.isFinite(when) ? Math.max(0, when - this.#now()) : 1_000;
       return { ...this.#local(op, LOCAL_CODE.RATE_LIMITED, "MetaApi rate limit", latencyMs), retryAfterMs };
+    }
+    if (errorName(e) === "ValidationError") {
+      // MetaApi rejected the request before sending it to the terminal.
+      return this.#local(
+        op,
+        RETCODE.INVALID,
+        `ValidationError: ${e instanceof Error ? e.message : ""}`,
+        latencyMs,
+      );
     }
     if (SERVER_NOT_CONNECTED_ERRORS.has(errorName(e))) {
       // Undocumented whether the request ran: unknown outcome (ambiguous for entries), unlike our own precheck.

@@ -270,8 +270,10 @@ describe("pending entries", () => {
     ["SELL_LIMIT", 1.086, false],
     ["SELL_STOP", 1.085, true],
     ["SELL_STOP", 1.086, false],
-    ["BUY_STOP_LIMIT", 1.085, true],
-    ["SELL_STOP_LIMIT", 1.087, true],
+    ["BUY_STOP_LIMIT", 1.087, true], // trigger above ask, like a stop
+    ["BUY_STOP_LIMIT", 1.085, false],
+    ["SELL_STOP_LIMIT", 1.085, true], // trigger below bid
+    ["SELL_STOP_LIMIT", 1.087, false],
   ] as const)("%s at %d → ok=%s", async (type, openPrice, ok) => {
     const { b } = broker();
     const r = await b.placePending({ ...order, type, openPrice });
@@ -449,5 +451,58 @@ describe("clientId on reads (R6.5 via the interface)", () => {
       magic: 0,
     });
     expect((await b.getOrders())[1]).not.toHaveProperty("clientId");
+  });
+});
+
+describe("MT5 fidelity fixes (trading-systems review)", () => {
+  it("close is refused while an existing level is within the freeze level (FROZEN, retryable for close)", async () => {
+    const { b } = broker();
+    const id = seedBuy(b, { tp: 1.08604 });
+    expect(await b.closePosition(id)).toMatchObject({ code: RETCODE.FROZEN, class: "retryable" });
+  });
+
+  it("cancel is refused while the order price is within the freeze level", async () => {
+    const { b } = broker();
+    const id = b.seedOrder({
+      symbol: "EURUSD",
+      type: "BUY_LIMIT",
+      volume: 0.1,
+      openPrice: 1.08607,
+      sl: null,
+      tp: null,
+      magic: 0,
+    });
+    expect((await b.cancelOrder(id)).code).toBe(RETCODE.FROZEN);
+  });
+
+  it("reconcile: position > order > in flight > not found", async () => {
+    const { b } = broker();
+    await b.placeMarket({
+      ...tag,
+      clientId: "cP",
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 0.1,
+      sl: null,
+      tp: null,
+    });
+    await b.placePending({
+      ...tag,
+      clientId: "cO",
+      symbol: "EURUSD",
+      type: "BUY_LIMIT",
+      volume: 0.1,
+      openPrice: 1.08,
+      sl: null,
+      tp: null,
+    });
+    b.setInFlight("cF", true);
+    const r = await b.reconcile(["cP", "cO", "cF", "cX"]);
+    expect(r.get("cP")?.status).toBe("position");
+    expect(r.get("cO")?.status).toBe("order");
+    expect(r.get("cF")).toEqual({ status: "inFlight" });
+    expect(r.get("cX")).toEqual({ status: "notFound" });
+    b.setInFlight("cF", false);
+    expect((await b.reconcile(["cF"])).get("cF")).toEqual({ status: "notFound" });
   });
 });

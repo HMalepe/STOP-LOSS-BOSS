@@ -18,8 +18,10 @@ import {
   type MarginMode,
   type MarketOrderReq,
   type PendingOrderReq,
+  type Reconciled,
   type TradeResult,
 } from "./BrokerProvider";
+import { reconcileFrom } from "./reconcile";
 import { classify, codeName, LOCAL_CODE, RETCODE, type BrokerOp } from "./retcodes";
 
 /** Deterministic PRNG (mulberry32). */
@@ -134,6 +136,7 @@ export class MockBroker implements BrokerProvider {
   #windowStart: number;
   #creditsUsed = 0;
   #beforeCall: ((call: { index: number; op: BrokerOp; target: string }) => void) | undefined;
+  readonly #inFlight = new Set<string>();
 
   constructor(opts: MockBrokerOptions) {
     this.#opts = opts;
@@ -297,6 +300,12 @@ export class MockBroker implements BrokerProvider {
     return this.#trade("close", positionId, null, () => {
       const p = this.#positions.get(positionId);
       if (p === undefined) return RETCODE.POSITION_CLOSED;
+      // MT5 also refuses to close while an existing SL/TP is within the freeze level (it's about to trigger).
+      const s = this.#symbol(p.symbol);
+      const closing = p.side === "BUY" ? s.bid : s.ask;
+      if (this.#withinFreeze(p.sl, closing, s.spec) || this.#withinFreeze(p.tp, closing, s.spec)) {
+        return RETCODE.FROZEN;
+      }
       this.#balance += this.#profit(p);
       this.#positions.delete(positionId);
       return RETCODE.DONE;
@@ -305,7 +314,13 @@ export class MockBroker implements BrokerProvider {
 
   cancelOrder(orderId: string): Promise<TradeResult> {
     return this.#trade("cancel", orderId, null, () => {
-      if (!this.#orders.delete(orderId)) return RETCODE.INVALID_ORDER;
+      const o = this.#orders.get(orderId);
+      if (o === undefined) return RETCODE.INVALID_ORDER;
+      // A pending order whose price is within the freeze level of the market can't be cancelled.
+      const s = this.#symbol(o.symbol);
+      const market = o.type.startsWith("BUY_") ? s.ask : s.bid;
+      if (this.#withinFreeze(o.openPrice, market, s.spec)) return RETCODE.FROZEN;
+      this.#orders.delete(orderId);
       return RETCODE.DONE;
     });
   }
@@ -362,12 +377,13 @@ export class MockBroker implements BrokerProvider {
         if (bad !== null) return bad;
         const pts = (n: number) => Math.round(n / s.spec.point);
         const minGap = s.spec.stopsLevel;
+        // A stop-limit's openPrice is its stop trigger, so it sits on the same side as a stop order.
         const valid =
-          req.type === "BUY_LIMIT" || req.type === "BUY_STOP_LIMIT"
+          req.type === "BUY_LIMIT"
             ? pts(s.ask) - pts(req.openPrice) > minGap
-            : req.type === "BUY_STOP"
+            : req.type === "BUY_STOP" || req.type === "BUY_STOP_LIMIT"
               ? pts(req.openPrice) - pts(s.ask) > minGap
-              : req.type === "SELL_LIMIT" || req.type === "SELL_STOP_LIMIT"
+              : req.type === "SELL_LIMIT"
                 ? pts(req.openPrice) - pts(s.bid) > minGap
                 : pts(s.bid) - pts(req.openPrice) > minGap;
         if (!valid) return RETCODE.INVALID_PRICE;
@@ -383,6 +399,17 @@ export class MockBroker implements BrokerProvider {
       },
       () => (ticket === undefined ? {} : { orderId: ticket }),
     );
+  }
+
+  async reconcile(clientIds: readonly string[]): Promise<ReadonlyMap<string, Reconciled>> {
+    const [positions, orders] = await Promise.all([this.getPositions(), this.getOrders()]);
+    return reconcileFrom(clientIds, positions, orders, this.#inFlight);
+  }
+
+  /** Test control: pretend a market order with this clientId is still being processed. */
+  setInFlight(clientId: string, inFlight: boolean): void {
+    if (inFlight) this.#inFlight.add(clientId);
+    else this.#inFlight.delete(clientId);
   }
 
   close(): Promise<void> {

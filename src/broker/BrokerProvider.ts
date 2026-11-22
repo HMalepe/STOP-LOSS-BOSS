@@ -99,6 +99,14 @@ export class BrokerError extends Error {
   }
 }
 
+/** R6.5 / ADR-0009: where an entry with this clientId ended up. */
+export type Reconciled =
+  | { readonly status: "position"; readonly positionIds: readonly string[] }
+  | { readonly status: "order"; readonly orderIds: readonly string[] }
+  /** A market order still being processed: it may yet become a position. Never retry over it. */
+  | { readonly status: "inFlight" }
+  | { readonly status: "notFound" };
+
 export interface BrokerProvider {
   readonly name: "mock" | "metaapi";
   health(): Promise<BrokerHealth>;
@@ -112,5 +120,7 @@ export interface BrokerProvider {
   placeMarket(req: MarketOrderReq): Promise<TradeResult>;
   placePending(req: PendingOrderReq): Promise<TradeResult>;
   cancelOrder(orderId: string): Promise<TradeResult>;
+  /** R6.5: look up entries by clientId, including market orders still in flight. Throws if the state isn't trustworthy. */
+  reconcile(clientIds: readonly string[]): Promise<ReadonlyMap<string, Reconciled>>;
   close(): Promise<void>;
 }

@@ -560,3 +560,88 @@ describe("watchdog and shutdown (SRE review)", () => {
     await expect(closeSharedMetaApiBroker()).resolves.toBeUndefined();
   });
 });
+
+describe("close-now hardening and reconcile (trading-systems review)", () => {
+  it("a failed close whose ticket is gone from the book is 'already closed' = success", async () => {
+    const conn = fake();
+    conn.closePosition.mockRejectedValue(
+      Object.assign(new Error("Invalid request"), {
+        numericCode: 10013,
+        stringCode: "TRADE_RETCODE_INVALID",
+      }),
+    );
+    conn.terminalState.positions = [];
+    expect(await new MetaApiBroker(conn).closePosition("11")).toMatchObject({
+      ok: true,
+      code: RETCODE.POSITION_CLOSED,
+      message: "already closed (not on the book; broker said TRADE_RETCODE_INVALID)",
+    });
+  });
+
+  it("a failed close whose ticket is still there stays a failure (retryable)", async () => {
+    const conn = fake();
+    conn.closePosition.mockRejectedValue(
+      Object.assign(new Error("Rejected"), { numericCode: 10006, stringCode: "TRADE_RETCODE_REJECT" }),
+    );
+    expect(await new MetaApiBroker(conn).closePosition("11")).toMatchObject({
+      ok: false,
+      class: "retryable",
+      code: 10006,
+    });
+  });
+
+  it("the book check is skipped when the stream isn't synchronized (can't trust 'gone')", async () => {
+    const conn = fake({ synchronized: false });
+    conn.closePosition.mockRejectedValue(
+      Object.assign(new Error("x"), { numericCode: 10006, stringCode: "TRADE_RETCODE_REJECT" }),
+    );
+    conn.terminalState.positions = [];
+    expect((await new MetaApiBroker(conn).closePosition("11")).ok).toBe(false);
+  });
+
+  it("close and cancel don't wait for a resync; entries and modifies do", async () => {
+    const conn = fake({ synchronized: false });
+    const b = new MetaApiBroker(conn);
+    expect((await b.cancelOrder("21")).ok).toBe(true);
+    expect(conn.cancelOrder).toHaveBeenCalled();
+    expect((await b.modifyPosition("11", { sl: 1, tp: null })).code).toBe(LOCAL_CODE.NOT_CONNECTED);
+  });
+
+  it("ValidationError means nothing was sent: INVALID, final for an entry", async () => {
+    const conn = fake();
+    conn.createMarketBuyOrder.mockRejectedValue(named("ValidationError"));
+    expect(await new MetaApiBroker(conn).placeMarket(market)).toMatchObject({
+      code: RETCODE.INVALID,
+      class: "final",
+    });
+  });
+
+  it("reconcile finds positions, pending orders and in-flight market orders by clientId", async () => {
+    const conn = fake();
+    conn.terminalState.positions = [{ ...rawPosition, clientId: "cP" }];
+    conn.terminalState.orders = [
+      {
+        id: 21,
+        type: "ORDER_TYPE_BUY_LIMIT",
+        symbol: "EURUSD",
+        openPrice: 1.08,
+        volume: 0.1,
+        clientId: "cO",
+      },
+      { id: 22, type: "ORDER_TYPE_BUY", symbol: "EURUSD", openPrice: 1.08, volume: 0.1, clientId: "cF" },
+    ];
+    const r = await new MetaApiBroker(conn).reconcile(["cP", "cO", "cF", "cX"]);
+    expect([...r.entries()]).toEqual([
+      ["cP", { status: "position", positionIds: ["11"] }],
+      ["cO", { status: "order", orderIds: ["21"] }],
+      ["cF", { status: "inFlight" }],
+      ["cX", { status: "notFound" }],
+    ]);
+  });
+
+  it("reconcile refuses a stale stream", async () => {
+    await expect(new MetaApiBroker(fake({ synchronized: false })).reconcile(["x"])).rejects.toMatchObject({
+      kind: "NOT_CONNECTED",
+    });
+  });
+});

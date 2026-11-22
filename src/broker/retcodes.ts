@@ -49,6 +49,15 @@ export const RETCODE = {
   LIMIT_VOLUME: 10034,
   INVALID_ORDER: 10035,
   POSITION_CLOSED: 10036,
+  INVALID_CLOSE_VOLUME: 10038,
+  CLOSE_ORDER_EXIST: 10039,
+  LIMIT_POSITIONS: 10040,
+  REJECT_CANCEL: 10041,
+  LONG_ONLY: 10042,
+  SHORT_ONLY: 10043,
+  CLOSE_ONLY: 10044,
+  FIFO_CLOSE: 10045,
+  HEDGE_PROHIBITED: 10046,
 } as const;
 
 export type RetcodeName = keyof typeof RETCODE;
@@ -93,6 +102,19 @@ const MAYBE_EXECUTED = new Set<number>([
 
 const isEntry = (op: BrokerOp) => op === "market" || op === "pending";
 
+/**
+ * Close by ticket is safe to resend: a second close of a closed position returns 10036 (success), and the adapter
+ * checks the book after any failed close. So for close, transient-looking refusals are retryable, not final.
+ */
+const CLOSE_RETRYABLE = new Set<number>([
+  RETCODE.REJECT,
+  RETCODE.FROZEN,
+  RETCODE.LOCKED,
+  RETCODE.CLOSE_ORDER_EXIST,
+  RETCODE.INVALID,
+  RETCODE.ERROR,
+]);
+
 /** §6 classification. Unknown codes are final (R6.4). */
 export function classify(code: number, op: BrokerOp): TradeClass {
   // A partial close leaves volume open: not done. Sending close by ticket again closes the rest.
@@ -101,6 +123,9 @@ export function classify(code: number, op: BrokerOp): TradeClass {
   // R4.5: closing something already closed is the outcome we wanted.
   if (code === RETCODE.POSITION_CLOSED) return op === "close" ? "success" : "final";
   if (RETRYABLE.has(code)) return "retryable";
+  if (op === "close" && CLOSE_RETRYABLE.has(code)) return "retryable";
+  // LOCKED = "request locked for processing": an entry may still go through.
+  if (code === RETCODE.LOCKED && isEntry(op)) return "ambiguous";
   if (MAYBE_EXECUTED.has(code)) {
     // R6.5: an entry may have landed. Modify/close/cancel are safe to resend (same levels = no-op; closed = 10036).
     return isEntry(op) ? "ambiguous" : "retryable";

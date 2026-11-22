@@ -8,3 +8,6 @@ both "this app opened it" and "which batch". The comment stays as a human label 
 reconciliation after an ambiguous timeout (R6.5). All matching goes through one pure function `decodeMagic()` with property tests.
 **Consequences:** Max ~10^9 batches per prefix, which is plenty. Must confirm in Phase 3 that MetaApi accepts `magic` on market and pending
 orders and returns it on positions. Manual trades (magic 0) and other EAs can never be touched by batch actions.
+
+**Note (2026-11-22):** the SDK documents comment + clientId ≤ 26 for trade options, but 30 (or 31 with one field) in the position
+schema. We enforce 26, the stricter, everywhere.

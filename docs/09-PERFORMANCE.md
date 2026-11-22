@@ -79,7 +79,9 @@ Read directly from the published package (`dist/**/*.d.ts` and the JS it ships),
 | SDK retries on reads | Up to `retryOpts.retries` (default 5) on TooManyRequests (waits for `recommendedRetryTime`), Timeout, NotSynchronized, Internal; backoff up to 30 s | same |
 | Request timeout | Default **60 s** (`requestTimeout`) | `metaApiWebsocket.client.js` constructor |
 | High-reliability accounts | Trade is sent to 2 instances with one random 32-char `requestId` (server-side de-dup) | `rpcRequestAllInstances` |
-| Position fields | `id: number`, `type: POSITION_TYPE_BUY/SELL`, `symbol`, `magic`, `openPrice`, `currentPrice`, `currentTickValue`, `stopLoss?`, `takeProfit?`, `volume`, `profit`, `swap`, `commission`, `comment?`, `clientId?` | `metaApiWebsocket.client.schemas.d.ts` |
+| Position fields | `id: number`, `type: POSITION_TYPE_BUY/SELL`, `symbol`, `magic`, `openPrice`, `currentPrice`, `currentTickValue`, `stopLoss?`, `takeProfit?`, `volume`, `profit`, `swap`, `commission`, `unrealizedProfit`, `unrealizedSwap`, `unrealizedCommission`, `comment?`, `clientId?` | `metaApiWebsocket.client.schemas.d.ts` |
+| `profit` meaning | open part **excluding** swap and commission + realized part including them. We use `unrealizedProfit + unrealizedSwap + unrealizedCommission` (net, open part), rounded to cents | same (corrected in board review) |
+| In-flight market orders | appear in `orders` as `ORDER_TYPE_BUY/SELL` (states STARTED, REQUEST_ADD…) until filled | same |
 | Order fields | `id: number`, `type: ORDER_TYPE_BUY_LIMIT/…`, `state`, `symbol`, `magic`, `openPrice`, `stopLoss?`, `takeProfit?`, `volume`, `currentVolume`, `clientId?` | same |
 | Spec fields | `symbol`, `digits`, `point`, `tickSize`, `stopsLevel`, `freezeLevel`, `minVolume`, `maxVolume`, `volumeStep`, `contractSize`, `tradeMode?` | same |
 | Price fields | `symbol`, `bid`, `ask`, `profitTickValue`, `lossTickValue`, `time: Date` | same |

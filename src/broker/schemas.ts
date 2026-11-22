@@ -9,6 +9,9 @@ import type { AccountInfo, AccountTradeMode, MarginMode, TradeResult } from "./B
 import { classify, codeFromString, codeName, type BrokerOp } from "./retcodes";
 import { BrokerError } from "./BrokerProvider";
 
+/** Round money to cents; "+ 0" turns -0 into 0 so logs and equality checks stay clean. */
+const cents = (n: number) => Math.round(n * 100) / 100 + 0;
+
 const id = z.union([z.number(), z.string().min(1)]).transform(String);
 /** MT5: absent or 0 = no level. */
 const level = z
@@ -34,8 +37,16 @@ export const metaApiPosition = z
     stopLoss: level,
     takeProfit: level,
     volume: z.number(),
-    /** MetaApi profit already includes swap and commission. */
+    /**
+     * MetaApi `profit` = open part EXCLUDING swap and commission + realized part including them (SDK 29.3.4 docs).
+     * We want the open part, net: unrealizedProfit + unrealizedSwap + unrealizedCommission.
+     */
     profit: z.number(),
+    swap: z.number().optional(),
+    commission: z.number().optional(),
+    unrealizedProfit: z.number().optional(),
+    unrealizedSwap: z.number().optional(),
+    unrealizedCommission: z.number().optional(),
     comment: z.string().optional(),
     clientId: z.string().optional(),
   })
@@ -47,7 +58,12 @@ export const metaApiPosition = z
     openPrice: p.openPrice,
     sl: p.stopLoss,
     tp: p.takeProfit,
-    profit: p.profit,
+    // Rounded to cents: float noise like 7.999999999999999 or 1e-15 must not flip "in profit" (> 0) checks.
+    profit: cents(
+      p.unrealizedProfit === undefined
+        ? p.profit + (p.swap ?? 0) + (p.commission ?? 0)
+        : p.unrealizedProfit + (p.unrealizedSwap ?? 0) + (p.unrealizedCommission ?? 0),
+    ),
     magic: p.magic ?? 0,
     ...(p.comment === undefined ? {} : { comment: p.comment }),
     ...(p.clientId === undefined || p.clientId === "" ? {} : { clientId: p.clientId }),
@@ -91,6 +107,17 @@ export const metaApiOrder = z
       ...(o.clientId === undefined || o.clientId === "" ? {} : { clientId: o.clientId }),
     };
   });
+
+/** Market orders still being processed (ORDER_TYPE_BUY/SELL in the orders list): only what R6.5 needs. */
+export const metaApiInFlight = z
+  .object({ id, type: z.string(), clientId: z.string().optional() })
+  .transform((o) =>
+    (o.type === "ORDER_TYPE_BUY" || o.type === "ORDER_TYPE_SELL") &&
+    o.clientId !== undefined &&
+    o.clientId !== ""
+      ? o.clientId
+      : null,
+  );
 
 export const metaApiSpec = z
   .object({

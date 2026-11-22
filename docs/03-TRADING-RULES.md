@@ -109,14 +109,28 @@ For price X and position p:
 - R6.2 On a 429, wait until the error's `metadata.recommendedRetryTime` [V] (ISO timestamp), not the computed backoff, and slow the shared limiter for everyone, not just this item.
 - R6.3 Before retrying a modify, re-fetch the quote and re-validate; if now invalid, fail with reason (don't push a bad stop).
 - R6.4 Unknown codes are non-retryable and logged with the raw code for later classification.
-- R6.5 **Timeouts on entries are not retryable blind.** A timeout or connection drop on `placeMarket` / `placePending` may mean the order
-  went through and only the reply was lost. Retrying can double the position. Before any retry of an entry: reconcile, i.e. re-read
-  positions/orders and look for one carrying this item's tag (R9.1: magic + `clientId`). Found → mark success with that ticket.
-  Not found → retry. Can't read → fail the item as "unknown, check manually". Modifies and closes are safe to retry
-  (re-sending the same levels is a no-op; closing a closed position returns 10036).
+- R6.5 **Entries with an unknown outcome are never retried blind (ADR-0009).** An entry whose result is `ambiguous` (our timeout,
+  MetaApi timeout, unknown error, LOCKED, server-side not-connected) may have landed, or may still land: the SDK can send a request
+  minutes later after reconnecting ("zombie"). Protocol:
+  1. If the result carries `settled`, wait for it (bounded, default 60 s). Its outcome is the outcome.
+  2. Then `reconcile(clientId)` with a bounded poll for stream lag (default 5 × 1 s): `position`/`order` → success with that ticket;
+     `inFlight` → keep waiting (it may become a position); `notFound` after the poll → retry ONLY if `settled` resolved to a definite
+     failure; if `settled` never resolved or resolved unknown → the item is "unknown, check manually". Never retried.
+  3. Can't read the state → "unknown, check manually".
+  Modifies and closes are safe to resend (same levels = no-op; closing a closed position returns 10036 or the book check says gone).
+- R6.6 **Close-now never gives up early.** For `close`, REJECT, FROZEN, LOCKED, CLOSE_ORDER_EXIST, INVALID and ERROR are retryable
+  (close by ticket is idempotent), and after ANY failed close the adapter checks the book: ticket gone = "already closed" (success).
+  A partial close (DONE_PARTIAL) is retryable, not done.
+- R6.7 **Partial entry fills.** DONE_PARTIAL on an entry is success, but the executor re-reads the position volume and reports the filled
+  volume (Phase 04).
 
 ## §7 Drift guard
 At execute time, re-read the quote. If any item's validity flipped since preview, abort the whole plan before the first broker call and return "price moved, re-preview". Configurable max drift in points (default: re-validate always).
+- R7.1 **Untouched levels are re-read too.** Modify sends both levels (ADR-0008), so a level the owner changed elsewhere (e.g. added an SL
+  in the MT5 app) after the preview would be overwritten, possibly with "none". At execute, re-read each item's position; if a level the
+  plan is NOT changing differs from what the preview saw, skip that item with "changed since preview, re-preview". Never send it.
+- R7.2 **Quote age.** A quote older than `MAX_QUOTE_AGE_MS` (default 3 s while the market is open) is unusable for preview, drift guard
+  and retry re-validation (R6.3): refuse with `PRICE_STALE` rather than validate against an old tick. Close-now is exempt (R4.7).
 
 ## §8 Break-even helpers (F5)
 - R8.1 BE: `sl = openPrice + (isBuy ? +N : −N) * point`; must pass R2.1/R2.3; else skip with reason "not far enough in profit".

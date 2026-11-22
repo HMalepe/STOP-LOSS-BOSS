@@ -3,8 +3,8 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 03 (broker adapter) 🟨
-- Current milestone: M2 interface + schemas
+- Phase: 04 (execution engine) ⬜, next up
+- Current milestone: none
 - Blockers: **Q2** (Exness demo connected to MetaApi) for the live [T] tests in Phase 03. MockBroker and adapter code can start without it
 
 ## Phases
@@ -13,8 +13,8 @@
 | 00 | Kickoff and board review | ✅ | Spec reviewed, MetaApi facts verified, ADR-0004 to 0007. Owner delegated Q1, Q3 to Q5 to Claude |
 | 01 | Foundation | ✅ | 81 tests, clean clone passes `pnpm verify`, E2E on 390×844, CI workflow |
 | 02 | Domain core | ✅ | 294 tests, domain 100% lines / 99% branches, fuzzed. Safety review: 1 critical + 1 high found and fixed |
-| 03 | Broker adapter | 🟨 | M1 ✅ SDK contract verified from the package itself (09, ADR-0008) |
-| 04 | Execution engine | ⬜ | Limiter is credit-based (09) |
+| 03 | Broker adapter | ✅ | 460 tests. SDK contract verified from the package. Board review (architect, trading systems, SRE): 1 critical, 8 high/must-fix fixed. Live demo contract run pending Q2 |
+| 04 | Execution engine | ⬜ | Limiter is credit-based (09). Carry-overs below |
 | 05 | Auth and security | ⬜ | |
 | 06 | API routes | ⬜ | |
 | 07 | UI | ⬜ | |
@@ -46,14 +46,31 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - 2026-11-21: Levels ≤ 0 points are plan errors (R0.4): 0 is "remove" on the MT5 wire
 - 2026-11-21: Helper rounding never gives less than asked (R8.4); lock never locks a loss (R8.6)
 - 2026-11-22: Broker wire policy: always send both levels, 0 = none; own timeouts; SDK never retries trades ([ADR-0008](docs/adr/0008-broker-wire-policy.md))
+- 2026-11-22: Entry reconciliation protocol: wait on `settled`, reconcile by clientId incl. in-flight, else "check manually", never blind retry ([ADR-0009](docs/adr/0009-entry-reconciliation.md))
+- 2026-11-22: Close-now never gives up early: book check after any failed close; transient refusals retryable for close (R6.6)
+- 2026-11-22: Position profit = open part net of swap + commission, rounded to cents (my earlier reading of the SDK was wrong; fixed)
+- 2026-11-22: R7.1 drift guard re-reads untouched levels; R7.2 quote age limit
+- 2026-11-22: MetaApi connection: per-attempt timeout, overall deadline, jittered backoff, fail-fast on auth errors, watchdog reconnect
 - 2026-11-21: Deferred: R1.1 batch filter → Phase 08 with R9.1; stale-quote check → drift guard §7 (Phase 04/06)
+
+## Phase 04 carry-overs (from the Phase 03 board review)
+- Executor waits on `settled` and follows ADR-0009 for every ambiguous entry; property tests for "never a double entry"
+- MockBroker: delayed landing of a lost-reply entry (fills N s later) to test the zombie path end to end
+- R7.1 untouched-level re-read and R7.2 quote age in the drift guard; `getSnapshot(symbol)` read in one tick
+- R6.7 partial entry fills: re-read volume
+- Structured log line per broker call (op, planId, item, clientId, code, class, latency); SDK logger at info+
+- `createBroker()` factory that fails closed: account `tradeMode` must match TRADING_MODE (demo app never drives a REAL account)
+- Market-data subscriptions: unsubscribe unused symbols; check credit cost
+- Later (Phase 06/09): lenient close-now parse, health routes, graceful shutdown, metrics/alerts, history lookup by clientId
 
 ## Open questions for the owner
 - **Q2** (needed by Phase 03) Is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet? R0.2 detects netting at runtime anyway.
 
 ## Unverified facts (must be tested on Exness demo via MetaApi, Phase 3)
 - ~~POSITION_MODIFY behaviour when one level is omitted~~ no longer matters: we always send both levels (ADR-0008)
-- MetaApi accepts and returns `magic` on orders/positions: **types say yes** (TradeOptions.magic, MetatraderPosition.magic); confirm on demo
+- MetaApi accepts and returns `magic` and `clientId` on orders/positions: **types say yes**; the contract suite checks both on demo
+- Sending 0 for a level removes it on MetaApi (ADR-0008 rests on it): contract suite checks it on demo
+- Real codes for close-twice and cancel-twice (mock assumes 10036 / 10035): contract suite records them
 - ~~Field name for account margin mode~~ `accountInformation.marginMode` (verified in SDK types)
 - ~~Tick value / margin calc field names~~ `price.profitTickValue/lossTickValue`, `position.currentTickValue`, `calculateMargin()` (verified)
 - Real trade latency (streaming vs REST), max in-flight trades, Exness stops/freeze levels, max open positions

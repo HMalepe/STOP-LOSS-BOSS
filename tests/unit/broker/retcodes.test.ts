@@ -47,13 +47,11 @@ describe("§6 classification", () => {
   });
 
   it.each([
-    RETCODE.REJECT,
     RETCODE.INVALID_VOLUME,
     RETCODE.INVALID_STOPS,
     RETCODE.TRADE_DISABLED,
     RETCODE.MARKET_CLOSED,
     RETCODE.NO_MONEY,
-    RETCODE.FROZEN,
     RETCODE.LIMIT_ORDERS,
     RETCODE.LIMIT_VOLUME,
   ])("%i is final (non-retryable)", (code) => {
@@ -104,5 +102,31 @@ describe("string codes", () => {
     expect(codeName(10016)).toBe("TRADE_RETCODE_INVALID_STOPS");
     expect(codeName(LOCAL_CODE.ADAPTER_TIMEOUT)).toBe("ADAPTER_TIMEOUT");
     expect(codeName(4242)).toBe("UNKNOWN_4242");
+  });
+});
+
+describe("close is safe to resend (trading-systems review)", () => {
+  it.each([
+    RETCODE.REJECT,
+    RETCODE.FROZEN,
+    RETCODE.LOCKED,
+    RETCODE.CLOSE_ORDER_EXIST,
+    RETCODE.INVALID,
+    RETCODE.ERROR,
+  ])("%i is retryable for close but final for modify", (code) => {
+    expect(classify(code, "close")).toBe("retryable");
+    expect(classify(code, "modify")).toBe("final");
+  });
+
+  it("LOCKED on an entry is an unknown outcome", () => {
+    expect(classify(RETCODE.LOCKED, "market")).toBe("ambiguous");
+    expect(classify(RETCODE.LOCKED, "pending")).toBe("ambiguous");
+  });
+
+  it("names the 10038-10046 codes (LIMIT_POSITIONS matters at 1,000+ positions)", () => {
+    expect(codeName(10040)).toBe("TRADE_RETCODE_LIMIT_POSITIONS");
+    expect(codeName(10039)).toBe("TRADE_RETCODE_CLOSE_ORDER_EXIST");
+    expect(codeName(10046)).toBe("TRADE_RETCODE_HEDGE_PROHIBITED");
+    expect(classify(RETCODE.LIMIT_POSITIONS, "market")).toBe("final");
   });
 });

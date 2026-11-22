@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BrokerError } from "@/broker/BrokerProvider";
 import {
   metaApiAccount,
+  metaApiInFlight,
   metaApiOrder,
   metaApiPosition,
   metaApiPrice,
@@ -32,7 +33,7 @@ const rawPosition = {
 };
 
 describe("positions", () => {
-  it("maps to the domain shape: string id, side, 0 → null level, profit as-is (already net of swap and commission)", () => {
+  it("maps to the domain shape: string id, side, 0 → null level, profit NET of swap and commission", () => {
     expect(parseOne(metaApiPosition, rawPosition, "position")).toEqual({
       id: "46214692",
       symbol: "EURUSD",
@@ -41,7 +42,7 @@ describe("positions", () => {
       openPrice: 1.085,
       sl: 1.08,
       tp: null,
-      profit: 9,
+      profit: 8, // 9 − 0.3 swap − 0.7 commission
       magic: 7731000000042,
       comment: "OD:k3x9",
       clientId: "p7Xa0001",
@@ -293,5 +294,53 @@ describe("clientId round-trip (R6.5)", () => {
       clientId: "c9",
     };
     expect(parseOne(metaApiOrder, order, "order")?.clientId).toBe("c9");
+  });
+});
+
+describe("profit is the open part, net of swap and commission (SDK docs)", () => {
+  it("prefers unrealized fields when present", () => {
+    const p = parseOne(
+      metaApiPosition,
+      { ...rawPosition, profit: 50, unrealizedProfit: 12, unrealizedSwap: -1.5, unrealizedCommission: -2 },
+      "position",
+    );
+    expect(p.profit).toBe(8.5);
+  });
+
+  it("a commission account: gross +1, commission −3 → net −2, so in-profit-only won't pick it", () => {
+    const p = parseOne(metaApiPosition, { ...rawPosition, profit: 1, swap: 0, commission: -3 }, "position");
+    expect(p.profit).toBe(-2);
+  });
+
+  it("falls back to profit alone when nothing else is sent", () => {
+    const p = parseOne(
+      metaApiPosition,
+      { ...rawPosition, swap: undefined, commission: undefined },
+      "position",
+    );
+    expect(p.profit).toBe(9);
+  });
+});
+
+describe("in-flight market orders (R6.5)", () => {
+  it("only market orders with a clientId count", () => {
+    expect(parseOne(metaApiInFlight, { id: 1, type: "ORDER_TYPE_BUY", clientId: "c1" }, "o")).toBe("c1");
+    expect(parseOne(metaApiInFlight, { id: 1, type: "ORDER_TYPE_SELL", clientId: "c2" }, "o")).toBe("c2");
+    expect(
+      parseOne(metaApiInFlight, { id: 1, type: "ORDER_TYPE_BUY_LIMIT", clientId: "c3" }, "o"),
+    ).toBeNull();
+    expect(parseOne(metaApiInFlight, { id: 1, type: "ORDER_TYPE_BUY" }, "o")).toBeNull();
+  });
+});
+
+describe("money rounding", () => {
+  it("float noise around zero never reads as a profit", () => {
+    const p = parseOne(
+      metaApiPosition,
+      { ...rawPosition, profit: 0.3, swap: -0.1, commission: -0.2 },
+      "position",
+    );
+    expect(p.profit).toBe(0);
+    expect(p.profit > 0).toBe(false);
   });
 });
