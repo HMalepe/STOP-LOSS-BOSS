@@ -22,7 +22,7 @@ describe("migrations", () => {
   it("apply once; a second run applies nothing", async () => {
     expect(await migrate(db)).toEqual([]);
     const rows = await db.query<{ name: string }>("select name from schema_migrations");
-    expect(rows.map((r) => r.name)).toEqual(["0001_init.sql"]);
+    expect(rows.map((r) => r.name)).toEqual(["0001_init.sql", "0002_security_hardening.sql"]);
   });
 
   it("row-level security is ON for every table (Supabase's public keys read nothing)", async () => {

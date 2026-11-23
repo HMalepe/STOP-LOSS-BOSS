@@ -8,6 +8,7 @@
  * - Error messages name the variable and the problem, never the value: a typo'd token must not end up in a crash log.
  */
 import { z } from "zod";
+import { TRUSTED_IP_HEADERS } from "./http/request";
 
 const TRADING_MODES = ["mock", "demo", "live"] as const;
 export type TradingMode = (typeof TRADING_MODES)[number];
@@ -35,7 +36,14 @@ const schema = z
 
     // Always required: it encrypts the TOTP secret and so must be stable across restarts (Phase 05).
     SESSION_SECRET: z.string().min(32, "must be at least 32 characters"),
-    APP_ORIGIN: z.url().optional(),
+    // Normalised to a bare origin (scheme://host[:port]) so a trailing slash or path can't break the CSRF check.
+    APP_ORIGIN: z
+      .url()
+      .transform((u) => new URL(u).origin)
+      .optional(),
+    // The one header our host's proxy sets with the client IP (rate limiting keys on it). Required outside mock: a wrong
+    // guess either lets clients forge their IP or puts everyone in one bucket, so it must be a deliberate choice.
+    TRUSTED_IP_HEADER: z.enum(TRUSTED_IP_HEADERS).optional(),
 
     // postgres(ql)://… for demo/live (Supabase); mock may use embedded Postgres: pglite://<dir> or pglite://memory.
     DATABASE_URL: z
@@ -66,6 +74,7 @@ const schema = z
       "METAAPI_REGION",
       "APP_ORIGIN",
       "DATABASE_URL",
+      "TRUSTED_IP_HEADER",
     ] as const;
     for (const key of required) {
       if (env[key] === undefined) {
@@ -92,7 +101,11 @@ const schema = z
       });
     }
   })
-  .transform((env) => ({ ...env, DATABASE_URL: env.DATABASE_URL ?? MOCK_DATABASE_URL }));
+  .transform((env) => ({
+    ...env,
+    DATABASE_URL: env.DATABASE_URL ?? MOCK_DATABASE_URL,
+    TRUSTED_IP_HEADER: env.TRUSTED_IP_HEADER ?? "x-forwarded-for",
+  }));
 
 /** Mock mode's default: embedded Postgres persisted to ./.data, so `pnpm dev` needs no database server. */
 export const MOCK_DATABASE_URL = "pglite://.data/order-desk";

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { verifyChain } from "@/server/audit/audit";
+import { auditKey, verifyChain } from "@/server/audit/audit";
 import { createOwner, type OwnerSecrets } from "@/server/auth/owner";
 import {
   hasFreshReauth,
@@ -55,7 +55,7 @@ describe("login: password then TOTP", () => {
     expect(session?.userId).toBe(owner.userId);
     expect(session?.absoluteExpiresAt).toBe(clock.now() + LIMITS.absoluteMs);
     expect(await actions()).toEqual(["owner.created", "login.ok"]);
-    expect((await verifyChain(db)).ok).toBe(true);
+    expect((await verifyChain(db, auditKey(SECRET))).ok).toBe(true);
   });
 
   it("nothing secret is stored in the clear: session and pending ids are hashes", async () => {
@@ -192,15 +192,17 @@ describe("rate limit and lockout (per IP, never a global lockout)", () => {
   });
 
   it("the TOTP step is rate limited too", async () => {
+    const step1 = await passwordStep(deps, { password: PASSWORD, ip: IP });
+    if (!step1.ok) throw new Error("setup");
     for (let i = 0; i < 5; i++) {
       await db.query("insert into login_attempts (ip, stage, ok, at) values ($1, 'totp', false, $2)", [
         IP,
         new Date(clock.now()).toISOString(),
       ]);
     }
-    expect(await secondFactorStep(deps, { pendingToken: "x", code: "123456", ip: IP })).toMatchObject({
-      code: "RATE_LIMITED",
-    });
+    expect(
+      await secondFactorStep(deps, { pendingToken: step1.pendingToken, code: code(), ip: IP }),
+    ).toMatchObject({ code: "RATE_LIMITED" });
   });
 });
 

@@ -1,7 +1,8 @@
 /** /api/admin/* : the kill switch and live enablement (docs/04, docs/05). */
 import { z } from "zod";
-import { audit } from "@/server/audit/audit";
-import { hasFreshReauth } from "@/server/auth/login";
+import { audit, auditKey } from "@/server/audit/audit";
+import { SESSION_COOKIE, clearCookie } from "@/server/auth/cookies";
+import { hasFreshReauth, revokeAllSessions } from "@/server/auth/login";
 import { killSwitchState, setKillSwitch } from "@/server/killSwitch";
 import type { makeGuard } from "./guard";
 import { fail, ok } from "./respond";
@@ -23,7 +24,7 @@ export function makeAdminRoutes(guard: ReturnType<typeof makeGuard>, envHalted: 
       if (!body.value.halted && !hasFreshReauth(session, deps.clock.now())) {
         return fail("REAUTH_REQUIRED", REAUTH);
       }
-      await setKillSwitch(deps.db, body.value.halted, session);
+      await setKillSwitch(deps, body.value.halted, session);
       return ok(await killSwitchState(deps.db, envHalted()));
     }),
 
@@ -34,17 +35,35 @@ export function makeAdminRoutes(guard: ReturnType<typeof makeGuard>, envHalted: 
       if (body.value.enabled && !hasFreshReauth(session, deps.clock.now())) {
         return fail("REAUTH_REQUIRED", REAUTH);
       }
-      const rows = await deps.db.query<{ id: string }>(
-        "update accounts set live_enabled = $1 where id = $2 returning id",
-        [body.value.enabled, body.value.accountId],
-      );
-      if (rows.length === 0) return fail("NOT_FOUND", "No such account.");
-      await audit(deps.db, {
-        actor: "owner",
-        action: body.value.enabled ? "live.enabled" : "live.disabled",
-        subject: body.value.accountId,
+      const found = await deps.db.tx(async (t) => {
+        const rows = await t.query<{ id: string }>(
+          "update accounts set live_enabled = $1 where id = $2 returning id",
+          [body.value.enabled, body.value.accountId],
+        );
+        if (rows.length === 0) return false;
+        await audit(
+          t,
+          auditKey(deps.sessionSecret),
+          {
+            actor: "owner",
+            action: body.value.enabled ? "live.enabled" : "live.disabled",
+            subject: body.value.accountId,
+          },
+          new Date(deps.clock.now()),
+        );
+        return true;
       });
+      if (!found) return fail("NOT_FOUND", "No such account.");
       return ok({ accountId: body.value.accountId, liveEnabled: body.value.enabled });
+    }),
+
+    /**
+     * "Sign out everywhere" (incident response: a phone lost, a cookie leaked). Re-auth gated so a stolen cookie alone
+     * can't use it to lock the owner out. Revokes this session too, so the cookie is cleared.
+     */
+    revokeAllSessions: guard.authed({ reauth: true }, async ({ deps, session, ip }) => {
+      const revoked = await revokeAllSessions(deps, session, ip);
+      return ok({ revoked }, 200, { "Set-Cookie": clearCookie(SESSION_COOKIE) });
     }),
   };
 }

@@ -70,7 +70,13 @@ describe("origin check (CSRF, second line after SameSite=Strict)", () => {
       ORIGIN,
       false,
     ],
-    ["mock without APP_ORIGIN: the request's own origin", "POST", { origin: ORIGIN }, undefined, true],
+    [
+      "mock without APP_ORIGIN: a non-loopback host is refused even from itself (DNS rebinding)",
+      "POST",
+      { origin: ORIGIN },
+      undefined,
+      false,
+    ],
     [
       "mock without APP_ORIGIN: still rejects others",
       "POST",
@@ -80,6 +86,16 @@ describe("origin check (CSRF, second line after SameSite=Strict)", () => {
     ],
   ])("%s", (_n, method, headers, appOrigin, expected) => {
     expect(originAllowed(req(method, headers), appOrigin)).toBe(expected);
+  });
+
+  it.each([
+    ["http://localhost:3000", true],
+    ["http://127.0.0.1:3000", true],
+    ["http://[::1]:3000", true],
+    ["http://192.168.1.20:3000", false],
+    ["http://attacker.example:3000", false],
+  ])("mock without APP_ORIGIN, same-origin POST on %s → %s", (origin, expected) => {
+    expect(originAllowed(req("POST", { origin }, undefined, `${origin}/api/x`), undefined)).toBe(expected);
   });
 });
 
@@ -169,9 +185,9 @@ describe("kill switch matrix (docs/05 Phase 05 required test)", () => {
   it("state: env OR db; db flag persists and is audited", async () => {
     expect(await killSwitchState(db, false)).toEqual({ halted: false, byEnv: false, byDb: false });
     expect(await killSwitchState(db, true)).toEqual({ halted: true, byEnv: true, byDb: false });
-    await setKillSwitch(db, true, { userId: owner.userId });
+    await setKillSwitch(deps, true, { userId: owner.userId });
     expect(await killSwitchState(db, false)).toEqual({ halted: true, byEnv: false, byDb: true });
-    await setKillSwitch(db, false, { userId: owner.userId });
+    await setKillSwitch(deps, false, { userId: owner.userId });
     expect((await killSwitchState(db, false)).halted).toBe(false);
     const actions = (await db.query<{ action: string }>("select action from audit_log order by id")).map(
       (r) => r.action,
@@ -202,7 +218,7 @@ describe("admin routes", () => {
   });
 
   it("OFF with a fresh re-auth works", async () => {
-    await setKillSwitch(db, true, { userId: owner.userId });
+    await setKillSwitch(deps, true, { userId: owner.userId });
     expect(await (await admin().killSwitchSet(post({ halted: false }))).json()).toMatchObject({
       halted: false,
     });

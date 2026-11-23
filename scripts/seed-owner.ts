@@ -1,13 +1,18 @@
 /**
  * pnpm seed:owner [--replace]
  * Creates the single owner: asks for a password (not echoed), shows a TOTP QR code for your authenticator app, and prints
- * 10 recovery codes ONCE. Needs DATABASE_URL and SESSION_SECRET in the environment.
+ * 10 recovery codes ONCE. Needs SESSION_SECRET; DATABASE_URL defaults to mock mode's embedded database.
+ * --replace rotates the owner IN PLACE: new password, TOTP and recovery codes, and every session is signed out.
+ * Run it with the app stopped when the database is embedded (pglite: one process at a time).
  */
 import { createInterface } from "node:readline";
 import QRCode from "qrcode";
 import { createOwner } from "@/server/auth/owner";
 import { migrate } from "@/server/db/migrate";
+import { pgliteDir } from "@/server/context";
+import { pgliteDb } from "@/server/db/pglite";
 import { postgresDb } from "@/server/db/postgres";
+import { MOCK_DATABASE_URL } from "@/server/env";
 
 function ask(question: string, hidden: boolean): Promise<string> {
   return new Promise((resolve) => {
@@ -28,13 +33,14 @@ function ask(question: string, hidden: boolean): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  const url = process.env.DATABASE_URL;
+  const given = process.env.DATABASE_URL?.trim();
+  const url = given === undefined || given === "" ? MOCK_DATABASE_URL : given;
   const secret = process.env.SESSION_SECRET;
-  if (url === undefined || url === "" || secret === undefined || secret.length < 32) {
-    process.stderr.write("Set DATABASE_URL and SESSION_SECRET (32+ chars) first.\n");
+  if (secret === undefined || secret.length < 32) {
+    process.stderr.write("Set SESSION_SECRET (32+ chars, the same one the app uses) first.\n");
     process.exit(1);
   }
-  const db = postgresDb(url, { max: 1 });
+  const db = url.startsWith("pglite:") ? pgliteDb(pgliteDir(url)) : postgresDb(url, { max: 1 });
   try {
     await migrate(db);
     const password = await ask("Owner password (12+ chars): ", true);

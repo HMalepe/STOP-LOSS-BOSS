@@ -16,6 +16,7 @@ const demoBase = {
   SESSION_SECRET: SECRET,
   APP_ORIGIN: "http://localhost:3000",
   DATABASE_URL: DB,
+  TRUSTED_IP_HEADER: "x-forwarded-for",
 };
 
 function problemsOf(source: Record<string, string | undefined>): readonly string[] {
@@ -76,9 +77,27 @@ describe("loadEnv per mode", () => {
       "METAAPI_REGION",
       "APP_ORIGIN",
       "DATABASE_URL",
+      "TRUSTED_IP_HEADER",
     ]) {
       expect(problems).toContain(`${key}: required when TRADING_MODE=demo`);
     }
+  });
+
+  it("APP_ORIGIN is normalised to a bare origin (a trailing slash or path can't break the CSRF check)", () => {
+    expect(loadEnv({ ...demoBase, APP_ORIGIN: "https://desk.example.com/" }).APP_ORIGIN).toBe(
+      "https://desk.example.com",
+    );
+    expect(loadEnv({ ...demoBase, APP_ORIGIN: "https://Desk.Example.com:8443/app?x=1" }).APP_ORIGIN).toBe(
+      "https://desk.example.com:8443",
+    );
+  });
+
+  it("TRUSTED_IP_HEADER: only known proxy headers; mock defaults to X-Forwarded-For", () => {
+    expect(loadEnv(MOCK).TRUSTED_IP_HEADER).toBe("x-forwarded-for");
+    expect(loadEnv({ ...demoBase, TRUSTED_IP_HEADER: "cf-connecting-ip" }).TRUSTED_IP_HEADER).toBe(
+      "cf-connecting-ip",
+    );
+    expect(problemsOf({ ...demoBase, TRUSTED_IP_HEADER: "x-my-ip" })[0]).toMatch(/^TRUSTED_IP_HEADER:/);
   });
 
   it("accepts a complete demo env", () => {

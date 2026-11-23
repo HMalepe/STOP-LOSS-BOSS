@@ -7,8 +7,8 @@ import type { Db } from "./sql";
 
 type Conn = PGlite | Parameters<Parameters<PGlite["transaction"]>[0]>[0];
 
-function wrap(pg: Conn, root: PGlite): Db {
-  return {
+function wrap(pg: Conn, root: PGlite, inTx: boolean): Db {
+  const self: Db = {
     async query<T extends object>(text: string, params: readonly unknown[] = []): Promise<T[]> {
       // Multi-statement text (migrations) has no params: run it as a script. Everything else is parameterised.
       if (params.length === 0 && text.includes(";")) {
@@ -18,14 +18,15 @@ function wrap(pg: Conn, root: PGlite): Db {
       return (await pg.query<T>(text, [...params])).rows;
     },
     tx<T>(fn: (db: Db) => Promise<T>): Promise<T> {
-      return root.transaction((t) => fn(wrap(t, root)));
+      return inTx ? fn(self) : root.transaction((t) => fn(wrap(t, root, true)));
     },
     close: () => root.close(),
   };
+  return self;
 }
 
 /** `dataDir` undefined = in memory. */
 export function pgliteDb(dataDir?: string): Db {
   const pg = dataDir === undefined ? new PGlite() : new PGlite(dataDir);
-  return wrap(pg, pg);
+  return wrap(pg, pg, false);
 }

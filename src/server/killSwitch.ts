@@ -3,7 +3,8 @@
  * action except close-all-now (R4.2). Turning it ON never needs re-auth (getting safe must be instant); turning it OFF
  * does (the route enforces that). Every change is audited.
  */
-import { audit } from "./audit/audit";
+import { audit, auditKey } from "./audit/audit";
+import type { AuthDeps } from "./auth/login";
 import type { Db } from "./db/sql";
 
 export type TradingAction =
@@ -28,19 +29,24 @@ export async function killSwitchState(db: Db, envHalted: boolean): Promise<KillS
   return { halted: envHalted || byDb, byEnv: envHalted, byDb };
 }
 
+/** The flag and its audit row commit together: there is never a change without its record, or a record without its change. */
 export async function setKillSwitch(
-  db: Db,
+  deps: Pick<AuthDeps, "db" | "clock" | "sessionSecret">,
   halted: boolean,
   actor: { readonly userId: string },
 ): Promise<void> {
-  await db.query(
-    "insert into config (key, value, updated_at, updated_by) values ($1, $2::jsonb, now(), $3) on conflict (key) do update set value = excluded.value, updated_at = now(), updated_by = excluded.updated_by",
-    [KEY, JSON.stringify({ halted }), actor.userId],
-  );
-  await audit(db, {
-    actor: "owner",
-    action: halted ? "kill_switch.on" : "kill_switch.off",
-    subject: actor.userId,
+  const at = new Date(deps.clock.now());
+  await deps.db.tx(async (t) => {
+    await t.query(
+      "insert into config (key, value, updated_at, updated_by) values ($1, $2::jsonb, $3, $4) on conflict (key) do update set value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+      [KEY, JSON.stringify({ halted }), at.toISOString(), actor.userId],
+    );
+    await audit(
+      t,
+      auditKey(deps.sessionSecret),
+      { actor: "owner", action: halted ? "kill_switch.on" : "kill_switch.off", subject: actor.userId },
+      at,
+    );
   });
 }
 

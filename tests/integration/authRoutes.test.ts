@@ -162,12 +162,18 @@ describe("POST /api/auth/login → /api/auth/totp → session", () => {
 });
 
 describe("request helpers", () => {
-  it("client IP is the RIGHT-most X-Forwarded-For entry (the one our proxy added)", () => {
+  it("client IP comes ONLY from the trusted header; X-Forwarded-For → its right-most entry", () => {
     const req = (h: Record<string, string>) => new Request("http://x", { headers: h });
     expect(clientIp(req({ "x-forwarded-for": "6.6.6.6, 10.0.0.1, 203.0.113.5" }))).toBe("203.0.113.5");
-    expect(clientIp(req({ "x-real-ip": "198.51.100.2" }))).toBe("198.51.100.2");
     expect(clientIp(req({ "x-forwarded-for": " , " }))).toBe("unknown");
     expect(clientIp(req({}))).toBe("unknown");
+    // Another header is the client's to forge: it is never consulted unless configured.
+    expect(clientIp(req({ "x-real-ip": "198.51.100.2" }))).toBe("unknown");
+    expect(clientIp(req({ "x-real-ip": "198.51.100.2", "x-forwarded-for": "9.9.9.9" }), "x-real-ip")).toBe(
+      "198.51.100.2",
+    );
+    expect(clientIp(req({ "cf-connecting-ip": " 2001:db8::1 " }), "cf-connecting-ip")).toBe("2001:db8::1");
+    expect(clientIp(req({ "fly-client-ip": "x".repeat(500) }), "fly-client-ip")).toHaveLength(64);
   });
 
   it("cookies: finds by exact name, decodes, ignores junk", () => {
@@ -224,7 +230,7 @@ describe("context wiring", () => {
     const ctx = await import("@/server/context");
     const a = await ctx.getDb();
     expect(await ctx.getDb()).toBe(a);
-    expect(await a.query("select count(*)::int as n from schema_migrations")).toEqual([{ n: 1 }]);
+    expect(await a.query("select count(*)::int as n from schema_migrations")).toEqual([{ n: 2 }]);
     const d = await ctx.getAuthDeps();
     expect(d.sessionSecret).toBe(SECRET);
     await a.close();

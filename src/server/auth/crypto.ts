@@ -6,6 +6,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  createHmac,
   hkdfSync,
   randomBytes,
   timingSafeEqual,
@@ -33,10 +34,14 @@ export function deriveKey(secret: string, purpose: string): Buffer {
   );
 }
 
-/** AES-256-GCM. Output: v1.<iv>.<tag>.<ciphertext> (base64url). Tampering fails decryption. */
-export function encrypt(plaintext: string, key: Buffer): string {
+/**
+ * AES-256-GCM. Output: v1.<iv>.<tag>.<ciphertext> (base64url). Tampering fails decryption.
+ * `aad` binds the ciphertext to its context (e.g. the owning user id): moved to another row, it no longer decrypts.
+ */
+export function encrypt(plaintext: string, key: Buffer, aad = ""): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
+  cipher.setAAD(Buffer.from(aad, "utf8"));
   const body = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   return [
     "v1",
@@ -46,14 +51,19 @@ export function encrypt(plaintext: string, key: Buffer): string {
   ].join(".");
 }
 
-export function decrypt(sealed: string, key: Buffer): string {
+export function decrypt(sealed: string, key: Buffer, aad = ""): string {
   const [version, iv, tag, body] = sealed.split(".");
   if (version !== "v1" || iv === undefined || tag === undefined || body === undefined) {
     throw new Error("unreadable ciphertext");
   }
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
   decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  decipher.setAAD(Buffer.from(aad, "utf8"));
   return Buffer.concat([decipher.update(Buffer.from(body, "base64url")), decipher.final()]).toString("utf8");
+}
+
+export function hmacSha256(key: Buffer, text: string): string {
+  return createHmac("sha256", key).update(text, "utf8").digest("hex");
 }
 
 /** Constant-time string equality (for codes and hashes). */

@@ -4,17 +4,18 @@ import type { Db } from "./sql";
 
 type Sql = postgres.Sql | postgres.TransactionSql;
 
-function wrap(sql: Sql, root: postgres.Sql): Db {
-  return {
+function wrap(sql: Sql, root: postgres.Sql, inTx: boolean): Db {
+  const self: Db = {
     async query<T extends object>(text: string, params: readonly unknown[] = []): Promise<T[]> {
       const rows = await sql.unsafe(text, params as postgres.ParameterOrJSON<never>[]);
       return rows as unknown as T[];
     },
     tx<T>(fn: (db: Db) => Promise<T>): Promise<T> {
-      return root.begin((t) => fn(wrap(t, root)));
+      return inTx ? fn(self) : root.begin((t) => fn(wrap(t, root, true)));
     },
     close: () => root.end(),
   };
+  return self;
 }
 
 export function postgresDb(url: string, opts: { readonly max?: number } = {}): Db {
@@ -27,5 +28,5 @@ export function postgresDb(url: string, opts: { readonly max?: number } = {}): D
     // Never print connection details or parameters on errors.
     onnotice: () => undefined,
   });
-  return wrap(root, root);
+  return wrap(root, root, false);
 }

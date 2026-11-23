@@ -31,17 +31,17 @@ function authError(e: AuthError): Response {
 
 export function makeAuthRoutes(deps: () => Promise<AuthDeps>) {
   return {
-    async login(req: Request): Promise<Response> {
+    async login(req: Request, ip = clientIp(req)): Promise<Response> {
       const body = await parseJson(req, loginBody);
       if (!body.ok) return fail("VALIDATION", body.message);
-      const r = await passwordStep(await deps(), { password: body.value.password, ip: clientIp(req) });
+      const r = await passwordStep(await deps(), { password: body.value.password, ip });
       if (!r.ok) return authError(r);
       return ok({ needsTotp: true }, 200, {
         "Set-Cookie": setCookie(PENDING_COOKIE, r.pendingToken, LIMITS.pendingTtlMs / 1000),
       });
     },
 
-    async totp(req: Request): Promise<Response> {
+    async totp(req: Request, ip = clientIp(req)): Promise<Response> {
       const body = await parseJson(req, codeBody);
       if (!body.ok) return fail("VALIDATION", body.message);
       const pendingToken = readCookie(req, PENDING_COOKIE);
@@ -50,7 +50,7 @@ export function makeAuthRoutes(deps: () => Promise<AuthDeps>) {
       const r = await secondFactorStep(d, {
         pendingToken,
         code: body.value.code,
-        ip: clientIp(req),
+        ip,
         userAgent: req.headers.get("user-agent") ?? "",
       });
       if (!r.ok) return authError(r);
@@ -71,13 +71,13 @@ export function makeAuthRoutes(deps: () => Promise<AuthDeps>) {
       });
     },
 
-    async reauth(req: Request): Promise<Response> {
+    async reauth(req: Request, ip = clientIp(req)): Promise<Response> {
       const body = await parseJson(req, codeBody);
       if (!body.ok) return fail("VALIDATION", body.message);
       const d = await deps();
       const session = await validateSession(d, readCookie(req, SESSION_COOKIE));
       if (session === null) return fail("UNAUTHENTICATED", "Sign in first.");
-      const r = await reauth(d, session, body.value.code, clientIp(req));
+      const r = await reauth(d, session, body.value.code, ip);
       return r.ok ? ok({ ok: true }) : authError(r);
     },
 
