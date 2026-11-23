@@ -1,4 +1,4 @@
-/** Graceful shutdown through the real runner, routes and database. */
+/** Resilience through the real runner, routes and database: graceful shutdown and the broker circuit breaker. */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BrokerProvider } from "@/broker/BrokerProvider";
 import type { MockBroker } from "@/broker/MockBroker";
@@ -115,5 +115,37 @@ describe("graceful shutdown", () => {
     expect(states.length).toBeGreaterThan(0);
     expect(states.filter((r) => r.state === "pending" || r.state === "sending")).toEqual([]);
     expect(states.some((r) => r.state === "unknown")).toBe(true);
+  });
+});
+
+describe("circuit breaker through the execute route", () => {
+  it("the broker drops mid-batch: the rest fail fast as 'not sent' (retryable), not after minutes of retries", async () => {
+    for (let i = 0; i < 12; i++) {
+      broker.seedPosition({
+        symbol: "XAUUSD",
+        side: "BUY",
+        volume: 0.1,
+        openPrice: 2650,
+        sl: null,
+        tp: null,
+        magic: 0,
+      });
+    }
+    const id = await preview(svc);
+    broker.onBeforeCall((c) => {
+      if (c.index === 0) broker.setConnected(false);
+    });
+    const res = await routesFor(svc).execute(post(`/api/plans/${id}/execute`, {}, s.cookie), id);
+    const { executionId } = (await res.json()) as { executionId: string };
+    for await (const { event } of svc.runner.events(executionId)) if (event.type === "complete") break;
+    await svc.background.idle();
+    const rows = await s.db.query<{ state: string; message: string; attempts: number }>(
+      "select state, message, attempts from execution_items where execution_id = $1",
+      [executionId],
+    );
+    const fast = rows.filter((r) => r.message.startsWith("not sent: broker unavailable"));
+    expect(fast.length).toBeGreaterThan(0);
+    expect(fast.every((r) => r.state === "failed" && r.attempts === 0)).toBe(true);
+    expect(rows.every((r) => r.state === "failed")).toBe(true);
   });
 });

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TradeResult } from "@/broker/BrokerProvider";
 import { MockBroker, type MockBrokerOptions } from "@/broker/MockBroker";
 import { LOCAL_CODE, RETCODE } from "@/broker/retcodes";
+import { CircuitBreaker } from "@/execution/circuitBreaker";
 import { execute, send } from "@/execution/executor";
 import { CreditLimiter } from "@/execution/rateLimiter";
 import type { RetryPolicy } from "@/execution/retries";
@@ -1163,5 +1164,70 @@ describe("restart recovery: the intent to send is recorded before the send", () 
     );
     expect(results[0]?.outcome).toBe("skipped");
     expect(beforeSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("circuit breaker: a dead broker fails a batch fast instead of grinding", () => {
+  const breakerFor = (s: VirtualScheduler, broker: MockBroker) =>
+    new CircuitBreaker({
+      threshold: 3,
+      cooldownMs: 5_000,
+      clock: s,
+      probe: async () => (await broker.health()).connected,
+    });
+
+  it("normal batch: after K connection failures the rest are 'not sent' without touching the broker", async () => {
+    const { s, broker, deps } = setup({}, 2);
+    const ids = Array.from({ length: 40 }, () => seedBuy(broker));
+    broker.setConnected(false);
+    const breaker = breakerFor(s, broker);
+    const { results, summary } = await collect(
+      ids.map((id) => modify(id, 1.08)),
+      { ...deps, breaker },
+      s,
+    );
+    expect(results.every((r) => r.outcome === "failed")).toBe(true);
+    expect(broker.calls.length).toBeLessThanOrEqual(6);
+    const fast = results.filter((r) => r.message.startsWith("not sent: broker unavailable"));
+    expect(fast.length).toBeGreaterThanOrEqual(34);
+    expect(fast.every((r) => r.attempts === 0)).toBe(true);
+    // Without the breaker the same batch takes 40 × 3 attempts with backoff.
+    const slow = setup({}, 2);
+    const slowIds = Array.from({ length: 40 }, () => seedBuy(slow.broker));
+    slow.broker.setConnected(false);
+    const baseline = await collect(
+      slowIds.map((id) => modify(id, 1.08)),
+      slow.deps,
+      slow.s,
+    );
+    expect(slow.broker.calls.length).toBe(120);
+    expect(summary.finishedAt - summary.startedAt).toBeLessThan(
+      (baseline.summary.finishedAt - baseline.summary.startedAt) / 5,
+    );
+  });
+
+  it("broker back: after the cooldown one probe lets the next batch through", async () => {
+    const { s, broker, deps } = setup({}, 1);
+    const breaker = breakerFor(s, broker);
+    const a = seedBuy(broker);
+    broker.setConnected(false);
+    await collect([modify(a, 1.08), modify(seedBuy(broker), 1.08)], { ...deps, breaker }, s);
+    expect(breaker.state).toBe("open");
+    broker.setConnected(true);
+    await s.run(s.sleep(5_000));
+    const { results } = await collect([modify(a, 1.08)], { ...deps, breaker }, s);
+    expect(results[0]?.outcome).toBe("done");
+    expect(breaker.state).toBe("closed");
+  });
+
+  it("close-now (urgent) never fails fast: every close is still attempted (R6.6)", async () => {
+    const { s, broker, deps } = setup({}, 2);
+    const ids = Array.from({ length: 10 }, () => seedBuy(broker));
+    broker.setConnected(false);
+    const breaker = breakerFor(s, broker);
+    const { results } = await collect(ids.map(close), { ...deps, breaker, priority: "urgent" }, s);
+    expect(results.every((r) => r.attempts > 0)).toBe(true);
+    expect(results.some((r) => r.message.includes("broker unavailable"))).toBe(false);
+    expect(breaker.state).toBe("open");
   });
 });

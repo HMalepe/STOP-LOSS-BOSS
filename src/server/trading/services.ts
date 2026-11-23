@@ -12,6 +12,7 @@ import { openMetaApiConnection } from "@/broker/metaapi/sdk";
 import type { Clock } from "@/domain/clock";
 import { systemClock } from "../clock";
 import { getEnv, type Env, type TradingMode } from "../env";
+import { CircuitBreaker } from "@/execution/circuitBreaker";
 import { CreditLimiter } from "@/execution/rateLimiter";
 import { InProcessRunner, type JobRunner } from "@/execution/jobRunner";
 import { makeRevalidator } from "@/execution/revalidate";
@@ -40,6 +41,9 @@ export interface TradingServices {
 /** MetaApi's budget (09-PERFORMANCE): 5,000 credits / 10 s, 10 per trade. */
 export const METAAPI_CREDITS = { capacity: 5_000, windowMs: 10_000, costPerTrade: 10 } as const;
 
+/** 5 connection failures in a row open it; a health probe after 5 s decides when to try again (circuitBreaker.ts). */
+export const BREAKER = { threshold: 5, cooldownMs: 5_000 } as const;
+
 /** One runner per process: the DB enforces one execution per plan, the limiter keeps us inside MetaApi's budget. */
 export function buildRunner(
   broker: BrokerProvider,
@@ -59,6 +63,15 @@ export function buildRunner(
     }),
     concurrency: 8,
     costPerTrade: METAAPI_CREDITS.costPerTrade,
+    breaker: new CircuitBreaker({
+      threshold: BREAKER.threshold,
+      cooldownMs: BREAKER.cooldownMs,
+      clock,
+      probe: async () => {
+        const h = await broker.health();
+        return h.connected && h.connectedToBroker && h.synchronized;
+      },
+    }),
     revalidate: makeRevalidator(broker, { clock }),
   });
 }

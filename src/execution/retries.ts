@@ -10,6 +10,7 @@
  */
 import type { BrokerProvider, TradeResult } from "@/broker/BrokerProvider";
 import { LOCAL_CODE, RETCODE, type BrokerOp } from "@/broker/retcodes";
+import type { CircuitBreaker } from "./circuitBreaker";
 import { send } from "./executor";
 import type { CreditLimiter, Priority } from "./rateLimiter";
 import type { Scheduler } from "./scheduler";
@@ -88,6 +89,8 @@ export interface RunContext {
   readonly signal?: AbortSignal;
   /** Called before a long wait (settle, reconcile) so the executor can give this worker to the next item. */
   readonly yieldWorker?: () => void;
+  /** Broker outage detection. Normal runs fail fast while it's open; close-now (urgent) only feeds it (R6.6). */
+  readonly breaker?: CircuitBreaker;
 }
 
 type Next =
@@ -174,6 +177,12 @@ export async function runItem(index: number, item: ExecItem, ctx: RunContext): P
 
   let last: TradeResult | undefined;
   for (;;) {
+    // Checked before taking credits: an item that can't go out must not spend the budget other runs need.
+    if (ctx.breaker !== undefined && ctx.priority !== "urgent" && !(await ctx.breaker.allow())) {
+      return last === undefined
+        ? base("failed", `not sent: ${ctx.breaker.reason()}. Retry once it's back.`)
+        : end("failed", `stopped retrying: ${ctx.breaker.reason()} (last: ${reasonOf(last)})`, last);
+    }
     let release: () => void;
     try {
       release = await ctx.limiter.acquire(ctx.costPerTrade ?? 10, ctx.priority);
@@ -217,6 +226,7 @@ export async function runItem(index: number, item: ExecItem, ctx: RunContext): P
     }
     last = r;
     latencyMs += r.latencyMs;
+    ctx.breaker?.record(r);
     // R6.2: a 429 slows everyone, not just this item. Done before logging so a broken logger can't skip it.
     let pause = r.retryAfterMs === undefined ? 0 : ctx.limiter.pauseFor(r.retryAfterMs);
     safely(() => ctx.onCall?.({ index, op: item.op, targetId, attempt: attempts, result: r }));

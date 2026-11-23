@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23: Circuit breaker, one per runner: 5 consecutive connection failures (not connected, adapter timeout, MT5 TIMEOUT/CONNECTION) open it; unsent items fail before taking credits as "not sent" (retryable); health() probe after 5 s → half-open. Close-now only feeds it, never fails fast (R6.6)
 - 2026-11-23: Graceful shutdown: SIGTERM → refuse executes before claim (503 SHUTTING_DOWN), abort normal runs, close-now keeps going, drain 15 s incl. result writes, then abort all + mark interrupted, close broker then DB. Needs NEXT_MANUAL_SIG_HANDLE=true (Next exits on SIGTERM otherwise; env check enforces it outside mock)
 - 2026-11-23: Close-now reads positions/orders leniently (getPositionsForClose): a row with ticket+symbol+side is closed with unknown numbers; a row without is listed as a loud "NOT closed, close it in MT5" warning. Before: one bad row anywhere → 503 on the panic button
 - 2026-11-23: Restart recovery: items "pending" at claim, "sending" before first send. Normal runs refuse to send if that write fails; close-now never waits on it (closes are safe to resend). Boot: pending → skipped "not sent" (retryable), sending → unknown
@@ -78,7 +79,7 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - ~~Persistence and restart recovery~~ done (except: entries still "sending" at boot → reconcile by clientId, lands with Phase 08 entries).
 - ~~Graceful shutdown~~ done (docs/08: host kill timeout must be set, Fly default 5 s, Railway 0 s).
 - **Drift guard at execute** (R7.1 with `before`, R7.2 quote age, §7) on the execute route; items loaded from the stored plan only.
-- **Circuit breaker**: after K consecutive NOT_CONNECTED/timeouts, probe health, fail the rest fast ("broker unavailable").
+- ~~Circuit breaker~~ done.
 - **Observability**: typed event hook for limiter waits, pauses, settles, reconcile polls, revalidate, abort; item wall time; metrics + alerts
   (any unknown > 0, long executions, error rate, breaker open). SDK logger at info+.
 - **createBroker() factory** failing closed: account tradeMode must match TRADING_MODE.

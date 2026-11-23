@@ -8,6 +8,7 @@
  */
 import type { BrokerProvider, TradeResult } from "@/broker/BrokerProvider";
 import { Channel, Deferred } from "./channel";
+import type { CircuitBreaker } from "./circuitBreaker";
 import type { CreditLimiter, Priority } from "./rateLimiter";
 import {
   DEFAULT_RETRY,
@@ -38,6 +39,8 @@ export interface ExecuteDeps {
   readonly random?: () => number;
   /** "urgent" for close-now: served ahead of everything else in the shared limiter. */
   readonly priority?: Priority;
+  /** Shared broker-outage breaker (circuitBreaker.ts). */
+  readonly breaker?: CircuitBreaker;
   /**
    * Restart recovery: durably record "about to send item `index`" before its first broker call, so a crash mid-batch
    * can tell "never sent" from "maybe sent". Normal runs wait for it and refuse to send if it fails. Urgent runs
