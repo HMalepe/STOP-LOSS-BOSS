@@ -39,6 +39,7 @@
     "tests/**/*.ts",
     "tests/**/*.tsx",
     "worker/**/*.ts",
+    "scripts/**/*.ts",
     "eslint/**/*.ts",
     "*.config.ts",
     ".next/types/**/*.ts",

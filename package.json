@@ -22,7 +22,8 @@
     "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:coverage && pnpm load && pnpm build",
     "test:contract": "vitest run tests/contract",
     "fix": "prettier --write . --log-level warn && eslint . --fix && prettier --write . --log-level warn",
-    "load": "vitest run --config vitest.load.config.ts"
+    "load": "vitest run --config vitest.load.config.ts",
+    "seed:owner": "tsx scripts/seed-owner.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
