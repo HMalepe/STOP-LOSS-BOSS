@@ -5,6 +5,7 @@
  * longer matches what was stored.
  */
 import { randomUUID } from "node:crypto";
+import { effectiveCaps } from "../caps";
 import { z } from "zod";
 import { buildPlan, type PlanDraft, type PlanError, type PlanRequest } from "@/domain/plan";
 import type { PlanItem, Position, Skipped } from "@/domain/types";
@@ -129,12 +130,14 @@ export async function createPlan(
   }
   const built = buildPlan(req, { positions, orders, quote, spec });
   if (!built.ok) return built;
-  if (built.plan.items.length > svc.maxPerBatch) {
+  // Close-now never comes through here: it's exempt from this cap (it's how you get flat).
+  const limit = (await effectiveCaps(db, svc.capCeilings)).maxPositionsPerBatch;
+  if (built.plan.items.length > limit) {
     return {
       ok: false,
       error: {
         code: "PLAN_INVALID",
-        message: `That's ${String(built.plan.items.length)} positions; one action may change at most ${String(svc.maxPerBatch)}. Narrow the filter (side, magic) or raise MAX_POSITIONS_PER_BATCH.`,
+        message: `That's ${String(built.plan.items.length)} positions; one action may change at most ${String(limit)}. Narrow the filter (side, magic) or raise the cap in Settings (up to ${String(svc.capCeilings.maxPositionsPerBatch)}).`,
         details: [],
       },
     };

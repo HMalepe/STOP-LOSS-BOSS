@@ -11,6 +11,7 @@ import { closeSharedMetaApiBroker, sharedMetaApiBroker } from "@/broker/metaapi"
 import { openMetaApiConnection } from "@/broker/metaapi/sdk";
 import type { Clock } from "@/domain/clock";
 import { systemClock } from "../clock";
+import { capsFromEnv, type Caps } from "../caps";
 import { getEnv, type Env, type TradingMode } from "../env";
 import { CircuitBreaker } from "@/execution/circuitBreaker";
 import { CreditLimiter } from "@/execution/rateLimiter";
@@ -32,8 +33,8 @@ export interface TradingServices {
   readonly runner: JobRunner;
   /** Result writes still in progress; graceful shutdown waits for them before closing the database. */
   readonly background: TaskTracker;
-  /** Most positions one preview may touch (MAX_POSITIONS_PER_BATCH). Close-now is exempt. */
-  readonly maxPerBatch: number;
+  /** Hard ceilings from the env (MAX_*). The owner's own caps (Settings) can only be at or below these. */
+  readonly capCeilings: Caps;
   /** The MetaApi account id (the accounts row whose live_enabled counts). null in mock mode. */
   readonly accountRef: string | null;
 }
@@ -214,7 +215,7 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
     clock,
     runner,
     background: new TaskTracker(),
-    maxPerBatch: env.MAX_POSITIONS_PER_BATCH,
+    capCeilings: capsFromEnv(env),
     accountRef: env.TRADING_MODE === "mock" ? null : (env.METAAPI_ACCOUNT_ID ?? null),
   };
 }

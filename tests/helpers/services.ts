@@ -23,7 +23,7 @@ export function mockServices(
     runner: buildRunner(b, db, clock),
     background: new TaskTracker(),
     accountRef: null,
-    maxPerBatch: 1_000,
+    capCeilings: { maxOrdersPerAction: 100, maxTotalLots: 5, maxRiskPct: 2, maxPositionsPerBatch: 1_000 },
     ...over,
   };
   return { svc, broker };

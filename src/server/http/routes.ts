@@ -1,10 +1,12 @@
 /** The route handlers wired to the real process services. Route files import from here. */
 import { getAuthDeps } from "@/server/context";
+import { capsFromEnv } from "@/server/caps";
 import { getEnv } from "@/server/env";
 import { getLogger } from "@/server/logger";
 import { makeAdminRoutes } from "./adminRoutes";
 import { makeAuthRoutes } from "./authRoutes";
 import { makeGuard } from "./guard";
+import { makeSettingsRoutes } from "./settingsRoutes";
 import { makeTradingRoutes } from "./tradingRoutes";
 import { getTradingServices, startedTradingServices } from "@/server/trading/services";
 
@@ -34,3 +36,5 @@ export const adminRoutes = makeAdminRoutes(
 );
 
 export const tradingRoutes = makeTradingRoutes(guard, getTradingServices);
+
+export const settingsRoutes = makeSettingsRoutes(guard, () => capsFromEnv(getEnv()));

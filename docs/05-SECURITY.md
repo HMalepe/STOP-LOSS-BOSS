@@ -17,7 +17,7 @@ This app can move real money. Threat model: stolen phone, leaked URL, leaked pas
 ## Trading safety
 - `TRADING_MODE` env: `mock` (default) | `demo` | `live`. `live` additionally needs `accounts.live_enabled = true`.
 - Kill switch: env `TRADING_HALTED=1` OR DB flag. Blocks all mutating actions except close-now.
-- Caps (DB config, re-auth to change): max orders per action, max total lots per action, max positions per modify batch.
+- Caps (DB config, re-auth to change): max orders per action, max total lots per action, max risk % per action, max positions per modify batch. The env MAX_* values are hard ceilings: the owner can lower a cap and raise it back to its ceiling, never past it (`src/server/caps.ts`).
 - Plans are single-use (DB unique constraint on executions.plan_id) and expire in 30s.
 - CSRF: SameSite=Strict + verify `Origin` header on every POST.
 - Security headers: strict CSP (no inline script; nonce if needed), HSTS, frame-ancestors none, referrer no-referrer.
@@ -35,7 +35,7 @@ Append-only table, RLS forbids update/delete for the app role. Every login, fail
 | TOTP secret at rest | AES-256-GCM, key = HKDF(SESSION_SECRET, "totp-secret"), AAD = user id (a ciphertext copied to another row won't decrypt). SESSION_SECRET is the app's data key: required in every mode, must stay stable, and rotating it means re-running `seed:owner --replace` |
 | Login rate limit + lockout | `src/server/auth/login.ts`, **reserve-then-verify**: each attempt is recorded as a failure under an advisory lock BEFORE any secret is checked, so parallel requests can't outrun the count. Per client network (IPv4 address / IPv6 /64): 5 failures/min, doubling lockout capped 24 h, reset by a successful login. Per account, second factor only: 10 failures/hour whatever the IP. Pending logins: 5 attempts, spent atomically. **No account-wide lockout on the password** (one owner must not be lockable by anyone) |
 | Sessions | 256-bit id, stored sha256, `__Host-` cookie HttpOnly+Secure+SameSite=Strict, 12 h idle (sliding), 7 d absolute |
-| Re-auth for sensitive changes | TOTP within 5 min: kill switch OFF, live ON, sign out everywhere (caps: Phase 06 settings). 3 wrong re-auth codes in a row revoke the session |
+| Re-auth for sensitive changes | TOTP within 5 min: kill switch OFF, live ON, sign out everywhere, change caps (any direction). 3 wrong re-auth codes in a row revoke the session |
 | Incident response | `POST /api/auth/sessions/revoke-all` (re-auth, audited, clears the cookie); `pnpm seed:owner --replace` for lost credentials |
 | Login flood (memory) | `src/server/auth/hashGate.ts`: 2 argon2 verifies at once, 6 queued, then 429 Busy (64 MiB each) |
 | CSRF | SameSite=Strict + exact Origin match on every non-GET, missing Origin / `Sec-Fetch-Site: cross-site` refused (`src/server/http/guard.ts`). APP_ORIGIN is normalised to a bare origin. Mock with no APP_ORIGIN: same-origin on loopback only (DNS rebinding) |

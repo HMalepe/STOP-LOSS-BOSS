@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23: Caps live in `config` (key caps), any change needs fresh re-auth (docs/05 says "change", unlike the kill switch's one-way rule), audited before/after. Env MAX_* are hard ceilings: a stolen session + TOTP still can't exceed what was deployed
 - 2026-11-23: Circuit breaker, one per runner: 5 consecutive connection failures (not connected, adapter timeout, MT5 TIMEOUT/CONNECTION) open it; unsent items fail before taking credits as "not sent" (retryable); health() probe after 5 s → half-open. Close-now only feeds it, never fails fast (R6.6)
 - 2026-11-23: Graceful shutdown: SIGTERM → refuse executes before claim (503 SHUTTING_DOWN), abort normal runs, close-now keeps going, drain 15 s incl. result writes, then abort all + mark interrupted, close broker then DB. Needs NEXT_MANUAL_SIG_HANDLE=true (Next exits on SIGTERM otherwise; env check enforces it outside mock)
 - 2026-11-23: Close-now reads positions/orders leniently (getPositionsForClose): a row with ticket+symbol+side is closed with unknown numbers; a row without is listed as a loud "NOT closed, close it in MT5" warning. Before: one bad row anywhere → 503 on the panic button
@@ -75,7 +76,7 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 ## Carry-overs to Phase 06 (from the Phase 03, 04 and 05 reviews)
 - ~~Wire the gates~~ done on execute (M3); close-now in M4.
 - ~~Restart recovery~~ done: pending rows at claim, "sending" before each send, boot recovery resolves leftovers.
-- Re-auth for caps changes (settings route).
+- ~~Re-auth for caps changes~~ done: `/api/settings/caps`.
 - ~~Persistence and restart recovery~~ done (except: entries still "sending" at boot → reconcile by clientId, lands with Phase 08 entries).
 - ~~Graceful shutdown~~ done (docs/08: host kill timeout must be set, Fly default 5 s, Railway 0 s).
 - **Drift guard at execute** (R7.1 with `before`, R7.2 quote age, §7) on the execute route; items loaded from the stored plan only.

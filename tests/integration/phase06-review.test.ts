@@ -127,7 +127,9 @@ describe("security H1: the SSE stream survives dropped clients and is bounded", 
 
 describe("security H2: batch cap", () => {
   it("a preview over MAX_POSITIONS_PER_BATCH is refused and nothing is stored; close-now is exempt", async () => {
-    const capped = makeTradingRoutes(s.guard, () => Promise.resolve({ ...svc, maxPerBatch: 2 }));
+    const capped = makeTradingRoutes(s.guard, () =>
+      Promise.resolve({ ...svc, capCeilings: { ...svc.capCeilings, maxPositionsPerBatch: 2 } }),
+    );
     const res = await capped.createPlan(
       post("/api/plans", { action: "levels", filter: BUYS, takeProfit: 2700 }, s.cookie),
     );

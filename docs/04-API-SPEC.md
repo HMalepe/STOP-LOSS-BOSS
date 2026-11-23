@@ -19,6 +19,8 @@ Errors: `{ error: { code: string, message: string, details?: unknown } }`.
 | POST | /api/close-now | {filter, cancelPending, confirm:"CLOSE"} → executes immediately (plan built and run in one call, still audited) |
 | GET | /api/history?cursor= | past executions |
 | POST | /api/admin/kill-switch | {halted:boolean} |
+| GET | /api/settings/caps | → {caps, ceilings}: caps in force and the server's MAX_* ceilings |
+| POST | /api/settings/caps | partial {maxOrdersPerAction, maxTotalLots, maxRiskPct, maxPositionsPerBatch}; re-auth; each ≤ its ceiling; audited `caps.changed` {before, after} |
 
 ## POST /api/plans body (discriminated union on `action`)
 ```ts

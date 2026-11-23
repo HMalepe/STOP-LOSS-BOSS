@@ -4,6 +4,7 @@
  * contract tests parse real responses with these schemas, so docs, validation and behaviour can't drift apart.
  */
 import { z } from "zod";
+import { capsPatchBody } from "@/server/caps";
 import { closeNowBody } from "@/server/trading/manage";
 import { planBody } from "@/server/trading/plans";
 import { killBody, liveBody } from "./adminRoutes";
@@ -298,6 +299,21 @@ export const OPERATIONS: readonly Op[] = [
     query: { cursor: "nextCursor from the previous page" },
     ok: { status: 200, schema: historyPage },
     errors: [...AUTHED, "VALIDATION"],
+  },
+  {
+    method: "get",
+    path: "/api/settings/caps",
+    summary: "Caps in force and the server's ceilings",
+    ok: { status: 200 },
+    errors: [...AUTHED],
+  },
+  {
+    method: "post",
+    path: "/api/settings/caps",
+    summary: "Change caps (re-auth; at most the server's ceilings)",
+    body: capsPatchBody,
+    ok: { status: 200 },
+    errors: [...AUTHED, "VALIDATION", "REAUTH_REQUIRED"],
   },
   {
     method: "get",
