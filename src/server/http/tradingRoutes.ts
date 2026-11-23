@@ -3,9 +3,12 @@ import { z } from "zod";
 import { BrokerError } from "@/broker/BrokerProvider";
 import { killSwitchState } from "@/server/killSwitch";
 import { AccountModeError, type TradingServices } from "@/server/trading/services";
+import { createPlan, LATER_ACTIONS, loadPlan, planBody } from "@/server/trading/plans";
 import { loadState, pagePositions } from "@/server/trading/state";
+import { auditKey, audit } from "@/server/audit/audit";
 import type { makeGuard } from "./guard";
 import { fail, ok } from "./respond";
+import { parseJson } from "./request";
 
 const SYMBOL = z
   .string()
@@ -53,6 +56,8 @@ export async function withBroker(
   }
 }
 
+const PLAN_INVALID_EMPTY = "Nothing to do: no open positions match.";
+
 export function makeTradingRoutes(
   guard: ReturnType<typeof makeGuard>,
   services: () => Promise<TradingServices>,
@@ -80,5 +85,62 @@ export function makeTradingRoutes(
         ),
       );
     }),
+
+    /** POST /api/plans: a dry run. Nothing is sent to the broker; the plan is stored for 30 s. */
+    createPlan: guard.authed({}, async ({ req, deps, session }) => {
+      const raw = await parseJson(req, z.object({ action: z.string() }).loose());
+      if (!raw.ok) return fail("VALIDATION", raw.message);
+      if (LATER_ACTIONS.has(raw.value.action)) {
+        return fail("VALIDATION", `"${raw.value.action}" arrives with the Order Desk. Not available yet.`);
+      }
+      const body = planBody.safeParse(raw.value);
+      if (!body.success) {
+        const first = body.error.issues[0];
+        return fail(
+          "VALIDATION",
+          first === undefined
+            ? "Invalid plan."
+            : `${first.path.map(String).join(".") || "body"}: ${first.message}`,
+        );
+      }
+      return withBroker(services, async (svc) => {
+        const r = await createPlan(svc, deps.db, session.userId, body.data, (t, summary) =>
+          audit(
+            t,
+            auditKey(deps.sessionSecret),
+            {
+              actor: "owner",
+              action: "plan.created",
+              subject: summary.id,
+              details: { action: summary.action, symbol: summary.symbol, count: summary.count },
+            },
+            new Date(svc.clock.now()),
+          ),
+        );
+        if (r.ok) return ok(r.summary, 201);
+        const e = r.error;
+        switch (e.code) {
+          case "VALIDATION":
+            return fail("VALIDATION", e.message);
+          case "PRICE_STALE":
+            return fail("PRICE_STALE", e.message);
+          case "BROKER_UNAVAILABLE":
+            return fail("BROKER_UNAVAILABLE", e.message, { details: e.details });
+          case "NO_MATCH":
+            return fail("PLAN_INVALID", PLAN_INVALID_EMPTY, { details: [] });
+          case "PLAN_INVALID":
+            return fail("PLAN_INVALID", e.message, { details: e.details });
+        }
+      });
+    }),
+
+    /** GET /api/plans/:id: the stored summary and its exact items. Only the owner's own plans. */
+    getPlan: (req: Request, id: string) =>
+      guard.authed({}, async ({ deps, session }) => {
+        const plan = await loadPlan(deps.db, session.userId, id);
+        if (plan === null) return fail("NOT_FOUND", "No such plan.");
+        const expired = plan.status === "created" && plan.expiresAt <= deps.clock.now();
+        return ok({ ...plan.summary, status: expired ? "expired" : plan.status, items: plan.items });
+      })(req),
   };
 }
