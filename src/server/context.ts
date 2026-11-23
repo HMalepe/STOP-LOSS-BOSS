@@ -39,7 +39,7 @@ export function getDb(): Promise<Db> {
 
 /** The database if it's already open; never opens one (shutdown must not connect just to close). */
 export function startedDb(): Promise<Db> | undefined {
-  return db;
+  return shared.db;
 }
 
 export async function getAuthDeps(): Promise<AuthDeps> {
