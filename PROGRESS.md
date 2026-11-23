@@ -19,12 +19,14 @@
 | 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
 | 07 | UI | ⬜ | |
 | 08 | Order Desk (bulk orders, presets, ladders) | ⬜ | |
+| 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
 | 10 | Hardening and go-live | ⬜ | |
 
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23 (owner): Cross-account pair, same size, no stops: concurrent legs, failed leg → auto-close the filled one, survivor prompt, per-account gates ([ADR-0011](docs/adr/0011-cross-account-pair.md))
 - 2026-11-23: Close-now ignores the kill switch (R4.2) and LIVE_NOT_ENABLED (risk-reducing) but refuses ACCOUNT_MODE_MISMATCH; typed confirm "CLOSE". Retry-failed = new plan of `failed` items only (never `unknown`), through the normal execute path
 - 2026-11-23: Execute idempotency lives in the DB (plan status flip + executions insert, one tx). Drift guard: any invalid/frozen modify → PRICE_MOVED whole plan; R7.1 mismatches skipped up front and reported in the 202
 - 2026-11-23: Plans store summary + exact items + items hash (0003); preview refuses a quote older than 3 s (PRICE_STALE, R7.2); market/ladder/cancel → 400 until Phase 08
