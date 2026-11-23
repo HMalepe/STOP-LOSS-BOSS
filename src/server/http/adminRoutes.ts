@@ -8,8 +8,8 @@ import type { makeGuard } from "./guard";
 import { fail, ok } from "./respond";
 import { parseJson } from "./request";
 
-const killBody = z.object({ halted: z.boolean() });
-const liveBody = z.object({ accountId: z.uuid(), enabled: z.boolean() });
+export const killBody = z.object({ halted: z.boolean() });
+export const liveBody = z.object({ accountId: z.uuid(), enabled: z.boolean() });
 
 const REAUTH = "Enter a fresh code from your authenticator to do this.";
 

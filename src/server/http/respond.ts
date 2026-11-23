@@ -1,22 +1,24 @@
 /** JSON responses in the 04-API-SPEC shape: success bodies as-is, errors as { error: { code, message, details? } }. */
-export type ErrorCode =
-  | "UNAUTHENTICATED"
-  | "TOTP_REQUIRED"
-  | "REAUTH_REQUIRED"
-  | "RATE_LIMITED"
-  | "VALIDATION"
-  | "FORBIDDEN_ORIGIN"
-  | "PLAN_INVALID"
-  | "PLAN_EXPIRED"
-  | "PLAN_ALREADY_EXECUTED"
-  | "PRICE_MOVED"
-  | "PRICE_STALE"
-  | "TRADING_HALTED"
-  | "LIVE_NOT_ENABLED"
-  | "ACCOUNT_MODE_MISMATCH"
-  | "BROKER_UNAVAILABLE"
-  | "NOT_FOUND"
-  | "INTERNAL";
+export const ERROR_CODES = [
+  "UNAUTHENTICATED",
+  "TOTP_REQUIRED",
+  "REAUTH_REQUIRED",
+  "RATE_LIMITED",
+  "VALIDATION",
+  "FORBIDDEN_ORIGIN",
+  "PLAN_INVALID",
+  "PLAN_EXPIRED",
+  "PLAN_ALREADY_EXECUTED",
+  "PRICE_MOVED",
+  "PRICE_STALE",
+  "TRADING_HALTED",
+  "LIVE_NOT_ENABLED",
+  "ACCOUNT_MODE_MISMATCH",
+  "BROKER_UNAVAILABLE",
+  "NOT_FOUND",
+  "INTERNAL",
+] as const;
+export type ErrorCode = (typeof ERROR_CODES)[number];
 
 const STATUS: Record<ErrorCode, number> = {
   UNAUTHENTICATED: 401,

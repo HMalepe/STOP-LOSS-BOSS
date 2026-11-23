@@ -23,7 +23,8 @@
     "test:contract": "vitest run tests/contract",
     "fix": "prettier --write . --log-level warn && eslint . --fix && prettier --write . --log-level warn",
     "load": "vitest run --config vitest.load.config.ts",
-    "seed:owner": "tsx scripts/seed-owner.ts"
+    "seed:owner": "tsx scripts/seed-owner.ts",
+    "openapi": "tsx scripts/openapi.ts && prettier --write docs/openapi.json"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

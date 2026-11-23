@@ -53,12 +53,16 @@
 | 1 | plan.test (1,000 positions, every TP preserved) + load (exact TPs) |
 | 2, 3, 11, 19, 25, 27 | domain tests |
 | 4 | jobRunner.test (same planId twice; concurrent triple tap) |
-| 5 | **Phase 06** (drift guard on the execute route) |
+| 5 | executeRoutes.test (PRICE_MOVED, zero broker calls) |
 | 6 | executor.test (R6.1 max 3, backoff timing, 429 pause incl. late 429) |
 | 7 | executor.test (closed mid-batch = done) |
 | 8, 9, 13–18, 23, 24 | **Phase 08** (Order Desk) |
-| 10, 12 | **Phase 05/06** (kill switch, live guard) |
+| 10, 12 | executeRoutes.test + manageRoutes.test (close-now still works halted) |
 | 20 | partial: margin mode parsed; refusal in Phase 08 |
 | 21 | executor.test (ADR-0009 paths, property test) + load (late landings, zero duplicates) |
-| 22 | partial: limiter + adapter; end-to-end with the server in Phase 06 |
+| 22 | limiter + adapter; server runner uses the shared CreditLimiter (MetaApi 5,000/10 s) |
 | 26 | superseded by ADR-0008 (both levels always sent); contract suite checks "0 removes" on demo |
+
+## API contract (Phase 06)
+`tests/integration/apiContract.test.ts`: every error code from a real request (completeness asserted), success bodies parsed
+with the contract schemas, `docs/openapi.json` must equal the generator's output, every documented route has its file.

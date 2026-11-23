@@ -18,8 +18,8 @@ import {
 import { fail, ok } from "./respond";
 import { clientIp, parseJson, readCookie } from "./request";
 
-const loginBody = z.object({ password: z.string().min(1).max(512) });
-const codeBody = z.object({ code: z.string().min(1).max(64) });
+export const loginBody = z.object({ password: z.string().min(1).max(512) });
+export const codeBody = z.object({ code: z.string().min(1).max(64) });
 
 function authError(e: AuthError): Response {
   return e.code === "RATE_LIMITED"

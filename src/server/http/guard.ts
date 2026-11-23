@@ -9,7 +9,7 @@
  * - Unexpected errors become a generic 500: the details go to the (secret-scrubbed) log, never to the client.
  */
 import type { Logger } from "pino";
-import { SESSION_COOKIE } from "@/server/auth/cookies";
+import { PENDING_COOKIE, SESSION_COOKIE } from "@/server/auth/cookies";
 import { hasFreshReauth, validateSession, type AuthDeps, type Session } from "@/server/auth/login";
 import { fail } from "./respond";
 import { clientIp, readCookie, type TrustedIpHeader } from "./request";
@@ -77,7 +77,12 @@ export function makeGuard(
           if (!originAllowed(req, e.appOrigin)) return fail("FORBIDDEN_ORIGIN", "Request refused.");
           const d = await deps();
           const session = await validateSession(d, readCookie(req, SESSION_COOKIE));
-          if (session === null) return fail("UNAUTHENTICATED", "Sign in first.");
+          if (session === null) {
+            // Password done, code not yet: say so, so the app goes straight to the code screen.
+            return readCookie(req, PENDING_COOKIE) === undefined
+              ? fail("UNAUTHENTICATED", "Sign in first.")
+              : fail("TOTP_REQUIRED", "Enter the code from your authenticator.");
+          }
           if (opts.reauth === true && !hasFreshReauth(session, d.clock.now())) {
             return fail("REAUTH_REQUIRED", "Enter a fresh code from your authenticator to do this.");
           }
