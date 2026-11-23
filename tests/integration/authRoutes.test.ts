@@ -215,6 +215,7 @@ describe("context wiring", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
+    delete (globalThis as Record<string, unknown>).__orderDeskDb;
   });
 
   it("pglite URLs map to a directory or memory", async () => {

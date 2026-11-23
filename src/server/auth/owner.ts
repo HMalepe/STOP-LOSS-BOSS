@@ -49,6 +49,8 @@ export async function createOwner(
     readonly replace?: boolean;
     readonly passwordParams?: PasswordParams;
     readonly now?: Date;
+    /** Base32 TOTP secret to use instead of a fresh random one. Tests only (a known secret computes codes). */
+    readonly totpSecret?: string;
   },
 ): Promise<OwnerSecrets> {
   const problem = passwordProblem(input.password);
@@ -66,7 +68,7 @@ export async function createOwner(
   }
 
   const userId = current?.id ?? randomUUID();
-  const totpSecret = newTotpSecret();
+  const totpSecret = input.totpSecret ?? newTotpSecret();
   const recoveryCodes = newRecoveryCodes();
   const passwordHash = await hashPassword(input.password, input.passwordParams);
   const sealed = sealTotpSecret(totpSecret, userId, input.sessionSecret);

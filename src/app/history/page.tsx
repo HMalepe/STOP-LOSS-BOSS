@@ -1,11 +1,13 @@
 import { History } from "lucide-react";
 import { getEnv } from "@/server/env";
+import { requireSession } from "@/server/http/pageSession";
 import { AppShell, PageHeader, Panel } from "@/ui/AppShell";
 import { EmptyState } from "@/ui/States";
 
 export const dynamic = "force-dynamic";
 
-export default function HistoryPage() {
+export default async function HistoryPage() {
+  await requireSession();
   return (
     <AppShell mode={getEnv().TRADING_MODE}>
       <PageHeader title="History" subtitle="Every batch you've run, with each order's result." />

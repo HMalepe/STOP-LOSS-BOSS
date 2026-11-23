@@ -40,8 +40,21 @@ export function originAllowed(req: Request, appOrigin: string | undefined): bool
   const origin = req.headers.get("origin");
   if (origin === null) return false;
   if (appOrigin !== undefined) return origin === appOrigin;
+  // Mock mode, no APP_ORIGIN: loopback only, same scheme and port. Next may report the request as "localhost" while the
+  // browser's Origin says "127.0.0.1" (or [::1]): any loopback name counts as the same machine.
   const own = new URL(req.url);
-  return LOOPBACK.has(own.hostname) && origin === own.origin;
+  let from: URL;
+  try {
+    from = new URL(origin);
+  } catch {
+    return false;
+  }
+  return (
+    LOOPBACK.has(own.hostname) &&
+    LOOPBACK.has(from.hostname) &&
+    from.protocol === own.protocol &&
+    from.port === own.port
+  );
 }
 
 export function makeGuard(

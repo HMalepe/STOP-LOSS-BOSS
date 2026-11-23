@@ -10,7 +10,14 @@ import { postgresDb } from "./db/postgres";
 import type { Db } from "./db/sql";
 import { getEnv } from "./env";
 
-let db: Promise<Db> | undefined;
+/**
+ * ONE database per process, on globalThis: Next builds API routes and pages as separate module graphs, so a module-level
+ * `let` would open two databases (for embedded PGlite: two unrelated copies, and a session created by the login API
+ * would be invisible to the desk page). Same pattern as the shared MetaApi connection.
+ */
+const KEY = "__orderDeskDb";
+const g = globalThis as typeof globalThis & { [KEY]?: { db?: Promise<Db> | undefined } };
+const shared = (g[KEY] ??= {});
 
 export function pgliteDir(url: string): string | undefined {
   const rest = url.replace(/^pglite:(\/\/)?/, "");
@@ -18,16 +25,16 @@ export function pgliteDir(url: string): string | undefined {
 }
 
 export function getDb(): Promise<Db> {
-  db ??= (async () => {
+  shared.db ??= (async () => {
     const url = getEnv().DATABASE_URL;
     const conn = url.startsWith("pglite:") ? pgliteDb(pgliteDir(url)) : postgresDb(url);
     await migrate(conn);
     return conn;
   })().catch((e: unknown) => {
-    db = undefined;
+    shared.db = undefined;
     throw e;
   });
-  return db;
+  return shared.db;
 }
 
 export async function getAuthDeps(): Promise<AuthDeps> {
