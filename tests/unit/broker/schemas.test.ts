@@ -8,6 +8,8 @@ import {
   metaApiPrice,
   metaApiSpec,
   parseList,
+  parseOrdersForClose,
+  parsePositionsForClose,
   parseOne,
   toTradeResult,
 } from "@/broker/schemas";
@@ -342,5 +344,53 @@ describe("money rounding", () => {
     );
     expect(p.profit).toBe(0);
     expect(p.profit > 0).toBe(false);
+  });
+});
+
+describe("close-now reads are lenient (R0.5, R4.7): one bad row never blocks the panic button", () => {
+  it("good rows parse exactly like the strict read", () => {
+    expect(parsePositionsForClose([rawPosition])).toEqual({
+      items: parseList(metaApiPosition, [rawPosition], "positions"),
+      unreadable: [],
+    });
+  });
+
+  it("a row with broken numbers is still closable by ticket: unknown values, never guessed", () => {
+    const broken = { ...rawPosition, id: 7, openPrice: "x", volume: null, profit: undefined, magic: "m" };
+    const { items, unreadable } = parsePositionsForClose([rawPosition, broken]);
+    expect(unreadable).toEqual([]);
+    expect(items[1]).toMatchObject({ id: "7", symbol: "EURUSD", side: "BUY", sl: null, tp: null });
+    for (const k of ["openPrice", "volume", "profit", "magic"] as const) expect(items[1]?.[k]).toBeNaN();
+  });
+
+  it("a row with no ticket, symbol or side can't be closed: reported, the rest still parse", () => {
+    const { items, unreadable } = parsePositionsForClose([
+      rawPosition,
+      { ...rawPosition, id: undefined },
+      { ...rawPosition, id: 8, type: "WEIRD" },
+      "garbage",
+    ]);
+    expect(items.map((p) => p.id)).toEqual(["46214692"]);
+    expect(unreadable).toEqual([
+      { id: null, symbol: "EURUSD", reason: expect.stringMatching(/id/) as unknown },
+      { id: "8", symbol: "EURUSD", reason: expect.stringMatching(/type/) as unknown },
+      { id: null, symbol: null, reason: expect.any(String) as unknown },
+    ]);
+  });
+
+  it("not a list at all → still BAD_DATA (nothing can be trusted)", () => {
+    expect(() => parsePositionsForClose("nope")).toThrow(BrokerError);
+  });
+
+  it("orders: broken numbers keep the ticket; non-pending types are dropped, not reported", () => {
+    const { items, unreadable } = parseOrdersForClose([
+      { id: 21, type: "ORDER_TYPE_BUY_LIMIT", symbol: "EURUSD", openPrice: "x", volume: 0.1 },
+      { id: 22, type: "ORDER_TYPE_BUY", symbol: "EURUSD", openPrice: 1.08, volume: 0.1 },
+      { type: "ORDER_TYPE_SELL_STOP", symbol: "EURUSD" },
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ id: "21", type: "BUY_LIMIT", symbol: "EURUSD" });
+    expect(items[0]?.openPrice).toBeNaN();
+    expect(unreadable).toEqual([{ id: null, symbol: "EURUSD", reason: expect.any(String) as unknown }]);
   });
 });

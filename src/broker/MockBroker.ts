@@ -20,6 +20,8 @@ import {
   type PendingOrderReq,
   type Reconciled,
   type TradeResult,
+  type Lenient,
+  type Unreadable,
 } from "./BrokerProvider";
 import { reconcileFrom } from "./reconcile";
 import { classify, codeName, LOCAL_CODE, RETCODE, type BrokerOp } from "./retcodes";
@@ -144,6 +146,7 @@ export class MockBroker implements BrokerProvider {
   readonly #inFlight = new Set<string>();
   /** Tickets that exist but aren't visible yet (zombie model). */
   readonly #hidden = new Set<string>();
+  readonly #unreadable: Unreadable[] = [];
 
   constructor(opts: MockBrokerOptions) {
     this.#opts = opts;
@@ -265,6 +268,19 @@ export class MockBroker implements BrokerProvider {
           ...(o.clientId === "" ? {} : { clientId: o.clientId }),
         })),
     );
+  }
+
+  async getPositionsForClose(): Promise<Lenient<Position>> {
+    return { items: await this.getPositions(), unreadable: [...this.#unreadable] };
+  }
+
+  async getOrdersForClose(): Promise<Lenient<PendingOrder>> {
+    return { items: await this.getOrders(), unreadable: [] };
+  }
+
+  /** Test hook: rows the broker sent that close-now couldn't read at all. */
+  seedUnreadable(row: Unreadable): void {
+    this.#unreadable.push(row);
   }
 
   getQuote(symbol: string): Promise<Quote> {

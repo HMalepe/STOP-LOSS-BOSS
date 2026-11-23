@@ -12,6 +12,7 @@ import { z } from "zod";
 import { buildPlan, type PlanDraft } from "@/domain/plan";
 import { roundToTick } from "@/domain/price";
 import type { PlanItem, PositionFilter, Quote, SymbolSpec } from "@/domain/types";
+import type { Unreadable } from "@/broker/BrokerProvider";
 import type { Db } from "../db/sql";
 import {
   gates,
@@ -79,9 +80,10 @@ export async function closeNow(
     ...(body.filter.magic === undefined ? {} : { magic: body.filter.magic }),
     ...(body.filter.inProfitOnly === undefined ? {} : { inProfitOnly: body.filter.inProfitOnly }),
   };
-  const [positions, orders, quote, spec] = await Promise.all([
-    svc.broker.getPositions(),
-    svc.broker.getOrders(),
+  // Lenient reads (R0.5, R4.7): one malformed row anywhere in the book must not block the panic button.
+  const [lenientPositions, lenientOrders, quote, spec] = await Promise.all([
+    svc.broker.getPositionsForClose(),
+    body.cancelPending ? svc.broker.getOrdersForClose() : Promise.resolve({ items: [], unreadable: [] }),
     optional<Quote>(svc.broker.getQuote(f.symbol)),
     optional<SymbolSpec>(svc.specs.get(f.symbol)),
   ]);
@@ -94,17 +96,55 @@ export async function closeNow(
   }
 
   const req = { action: "close" as const, filter: f, cancelPending: body.cancelPending };
+  const positions = lenientPositions.items;
+  const orders = lenientOrders.items;
+  const unread = [
+    ...unreadableWarning("position", lenientPositions.unreadable, f.symbol),
+    ...unreadableWarning("pending order", lenientOrders.unreadable, f.symbol),
+  ];
   const built = buildPlan(req, { positions, orders, quote, spec });
-  if (!built.ok) return { ok: false, code: "NOTHING_TO_CLOSE", message: built.error.message };
+  if (!built.ok) {
+    const message = [built.error.message, ...unread].join(" ");
+    return { ok: false, code: "NOTHING_TO_CLOSE", message };
+  }
+  const plan =
+    unread.length === 0 ? built.plan : { ...built.plan, warnings: [...unread, ...built.plan.warnings] };
 
-  const summary = await storePlan(svc, db, userId, built.plan, req, positions, record);
-  const started = await svc.runner.start(summary.id, built.plan.items, { urgent: true });
+  const summary = await storePlan(svc, db, userId, plan, req, positions, record);
+  const started = await svc.runner.start(summary.id, plan.items, { urgent: true });
   // A fresh plan id can't already be claimed; this only guards against a broken store.
   if (!started.ok) return { ok: false, code: "INTERNAL", message: "Couldn't start the close. Try again." };
   urgentFilters.set(started.executionId, key);
   if (urgentFilters.size > 100) urgentFilters.delete(urgentFilters.keys().next().value ?? "");
   void persistResults(svc.runner, db, started.executionId, complete);
   return { ok: true, executionId: started.executionId, summary };
+}
+
+/**
+ * Rows close-now couldn't read at all, on this symbol or with no readable symbol (could be this one). Never silent:
+ * the owner must know something may still be open.
+ */
+export function unreadableWarning(
+  kind: "position" | "pending order",
+  rows: readonly Unreadable[],
+  symbol: string,
+): string[] {
+  const mine = rows.filter((r) => r.symbol === null || r.symbol.toUpperCase() === symbol.toUpperCase());
+  if (mine.length === 0) return [];
+  const tickets = mine.flatMap((r) => (r.id === null ? [] : [r.id]));
+  const noTicket = mine.length - tickets.length;
+  const parts = [
+    ...(tickets.length === 0
+      ? []
+      : [
+          `${tickets.length === 1 ? "ticket" : "tickets"} ${tickets.slice(0, 5).join(", ")}${tickets.length > 5 ? ` and ${String(tickets.length - 5)} more` : ""}`,
+        ]),
+    ...(noTicket === 0 ? [] : [`${noTicket === 1 ? "one" : String(noTicket)} with no ticket`]),
+  ];
+  const n = mine.length;
+  return [
+    `${String(n)} ${kind}${n === 1 ? "" : "s"} couldn't be read (${parts.join(", ")}): ${n === 1 ? "it is" : "they are"} NOT ${kind === "position" ? "closed" : "cancelled"}. ${kind === "position" ? "Close" : "Cancel"} ${n === 1 ? "it" : "them"} in MT5.`,
+  ];
 }
 
 /** Running close-nows by filter (bounded). */

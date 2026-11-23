@@ -46,7 +46,7 @@ const goldLeft = async () => (await broker.getPositions()).filter((p) => p.symbo
 /** Delegates everything to the mock, overriding some reads. */
 function withReads(
   b: MockBroker,
-  over: Partial<Pick<BrokerProvider, "getQuote" | "getSymbolSpec">>,
+  over: Partial<Pick<BrokerProvider, "getQuote" | "getSymbolSpec" | "getPositions" | "getOrders">>,
 ): BrokerProvider {
   return new Proxy(b, {
     get(target, prop, recv) {
@@ -58,6 +58,24 @@ function withReads(
 }
 
 describe("POST /api/close-now", () => {
+  it("R0.5/R4.7: a broken row elsewhere in the book can't block the panic button; unreadable rows are warned about", async () => {
+    const corrupt = () => Promise.reject(new BrokerError("BAD_DATA", "positions[3].type: invalid"));
+    broker.seedUnreadable({ id: "777", symbol: "XAUUSD", reason: "type: invalid" });
+    broker.seedUnreadable({ id: null, symbol: null, reason: "id: required" });
+    broker.seedUnreadable({ id: "888", symbol: "EURUSD", reason: "type: invalid" });
+    const r = makeTradingRoutes(s.guard, () =>
+      Promise.resolve({ ...svc, broker: withReads(broker, { getPositions: corrupt, getOrders: corrupt }) }),
+    );
+    const res = await closeAll(undefined, r);
+    expect(res.status).toBe(202);
+    const { executionId, plan } = (await res.json()) as { executionId: string; plan: { warnings: string[] } };
+    expect(plan.warnings).toContain(
+      "2 positions couldn't be read (ticket 777, one with no ticket): they are NOT closed. Close them in MT5.",
+    );
+    await finished(executionId);
+    expect(await goldLeft()).toBe(0);
+  });
+
   it("one call: records the plan, closes every matching position biggest loser first, cancels pending, audits", async () => {
     const res = await closeAll();
     expect(res.status).toBe(202);

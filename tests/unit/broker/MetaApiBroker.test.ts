@@ -6,6 +6,7 @@ import {
   sharedMetaApiBroker,
   type MetaApiConnectionPort,
 } from "@/broker/metaapi";
+import { BrokerError } from "@/broker/BrokerProvider";
 import { LOCAL_CODE, RETCODE } from "@/broker/retcodes";
 import { AdapterTimeout, withTimeout } from "@/broker/timeout";
 
@@ -94,6 +95,21 @@ const market = { ...tag, symbol: "EURUSD", side: "BUY" as const, volume: 0.1, sl
 afterEach(() => {
   vi.useRealTimers();
   resetSharedMetaApiBroker();
+});
+
+describe("close-now reads (lenient)", () => {
+  it("one unparseable position elsewhere fails getPositions but not getPositionsForClose", async () => {
+    const conn = fake();
+    conn.terminalState.positions = [rawPosition, { id: 99, type: "WEIRD", symbol: "GBPUSD" }];
+    const b = new MetaApiBroker(conn);
+    await expect(b.getPositions()).rejects.toThrow(BrokerError);
+    const lenient = await b.getPositionsForClose();
+    expect(lenient.items.map((p) => p.id)).toEqual(["11"]);
+    expect(lenient.unreadable).toEqual([
+      { id: "99", symbol: "GBPUSD", reason: expect.any(String) as unknown },
+    ]);
+    expect((await b.getOrdersForClose()).items.map((o) => o.id)).toEqual(["21"]);
+  });
 });
 
 describe("reads from the stream", () => {

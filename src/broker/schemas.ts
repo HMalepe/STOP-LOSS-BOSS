@@ -5,7 +5,14 @@
  */
 import { z } from "zod";
 import type { PendingOrder, PendingType, Position, Quote, SymbolSpec } from "@/domain/types";
-import type { AccountInfo, AccountTradeMode, MarginMode, TradeResult } from "./BrokerProvider";
+import type {
+  AccountInfo,
+  AccountTradeMode,
+  Lenient,
+  MarginMode,
+  TradeResult,
+  Unreadable,
+} from "./BrokerProvider";
 import { classify, codeFromString, codeName, type BrokerOp } from "./retcodes";
 import { BrokerError } from "./BrokerProvider";
 
@@ -231,6 +238,100 @@ export function toTradeResult(op: BrokerOp, raw: unknown, latencyMs: number): Tr
 export function parseList<T>(schema: z.ZodType<T>, raw: unknown, what: string): T[] {
   if (!Array.isArray(raw)) throw new BrokerError("BAD_DATA", `${what}: expected a list`);
   return raw.map((item, i) => parseOne(schema, item, `${what}[${String(i)}]`));
+}
+
+const rowKey = z.object({ id, symbol: z.string().min(1) });
+/** Only a number is a number; anything else is unknown (NaN), never a guessed default. */
+const num = (v: unknown) => (typeof v === "number" ? v : Number.NaN);
+const magicOf = (v: unknown) => (v === undefined ? 0 : num(v));
+const issue = (e: z.ZodError) => {
+  const first = e.issues[0];
+  return `${first === undefined ? "" : first.path.map(String).join(".") + ": "}${first?.message ?? "invalid"}`;
+};
+function unreadable(raw: unknown, reason: string): Unreadable {
+  const r = (typeof raw === "object" && raw !== null ? raw : {}) as { id?: unknown; symbol?: unknown };
+  const idOk =
+    (typeof r.id === "number" && Number.isFinite(r.id)) || (typeof r.id === "string" && r.id !== "");
+  return {
+    id: idOk ? String(r.id) : null,
+    symbol: typeof r.symbol === "string" && r.symbol !== "" ? r.symbol : null,
+    reason,
+  };
+}
+function lenientList<T>(
+  raw: unknown,
+  what: string,
+  strict: z.ZodType<T>,
+  fallback: (row: unknown) => { ok: true; value: T } | { ok: false; reason: string },
+): Lenient<T> {
+  if (!Array.isArray(raw)) throw new BrokerError("BAD_DATA", `${what}: expected a list`);
+  const items: T[] = [];
+  const bad: Unreadable[] = [];
+  for (const row of raw as unknown[]) {
+    const r = strict.safeParse(row);
+    if (r.success) {
+      items.push(r.data);
+      continue;
+    }
+    const f = fallback(row);
+    if (f.ok) items.push(f.value);
+    else bad.push(unreadable(row, f.reason));
+  }
+  return { items, unreadable: bad };
+}
+
+const positionKey = rowKey.extend({ type: z.enum(["POSITION_TYPE_BUY", "POSITION_TYPE_SELL"]) });
+
+/**
+ * Close-now only (R0.5, R4.7). A row that fails the strict schema but still has a ticket, symbol and side is kept with
+ * unknown (NaN) numbers: the domain closes it by ticket, puts unknown P/L first and warns. Levels are irrelevant to a
+ * close and come back null. A row without ticket, symbol or side is reported, never dropped silently.
+ */
+export function parsePositionsForClose(raw: unknown): Lenient<Position> {
+  return lenientList(raw, "positions", metaApiPosition, (row) => {
+    const k = positionKey.safeParse(row);
+    if (!k.success) return { ok: false, reason: issue(k.error) };
+    const r = row as { openPrice?: unknown; volume?: unknown; magic?: unknown };
+    return {
+      ok: true,
+      value: {
+        id: k.data.id,
+        symbol: k.data.symbol,
+        side: k.data.type === "POSITION_TYPE_BUY" ? "BUY" : "SELL",
+        volume: num(r.volume),
+        openPrice: num(r.openPrice),
+        sl: null,
+        tp: null,
+        profit: Number.NaN,
+        magic: magicOf(r.magic),
+      },
+    };
+  });
+}
+
+/** Close-now's cancel-pending, same rules. Non-pending types (market in flight, CLOSE_BY) are dropped, as in the strict read. */
+export function parseOrdersForClose(raw: unknown): Lenient<PendingOrder> {
+  const all = lenientList<PendingOrder | null>(raw, "orders", metaApiOrder, (row) => {
+    const k = rowKey.extend({ type: z.string() }).safeParse(row);
+    if (!k.success) return { ok: false, reason: issue(k.error) };
+    const type = (PENDING_TYPES as Record<string, PendingType | undefined>)[k.data.type];
+    if (type === undefined) return { ok: true, value: null };
+    const r = row as { openPrice?: unknown; volume?: unknown; currentVolume?: unknown; magic?: unknown };
+    return {
+      ok: true,
+      value: {
+        id: k.data.id,
+        symbol: k.data.symbol,
+        type,
+        volume: num(r.currentVolume ?? r.volume),
+        openPrice: num(r.openPrice),
+        sl: null,
+        tp: null,
+        magic: magicOf(r.magic),
+      },
+    };
+  });
+  return { items: all.items.filter((o): o is PendingOrder => o !== null), unreadable: all.unreadable };
 }
 
 export function parseOne<T>(schema: z.ZodType<T>, raw: unknown, what: string): T {

@@ -16,6 +16,7 @@ import {
   type PendingOrderReq,
   type Reconciled,
   type TradeResult,
+  type Lenient,
 } from "../BrokerProvider";
 import { reconcileFrom } from "../reconcile";
 import { classify, codeName, LOCAL_CODE, RETCODE, type BrokerOp } from "../retcodes";
@@ -27,6 +28,8 @@ import {
   metaApiPrice,
   metaApiSpec,
   parseList,
+  parseOrdersForClose,
+  parsePositionsForClose,
   parseOne,
   toTradeResult,
 } from "../schemas";
@@ -151,6 +154,14 @@ export class MetaApiBroker implements BrokerProvider {
         (o): o is PendingOrder => o !== null,
       ),
     );
+  }
+
+  getPositionsForClose(): Promise<Lenient<Position>> {
+    return this.#read(() => parsePositionsForClose(this.#conn.terminalState.positions));
+  }
+
+  getOrdersForClose(): Promise<Lenient<PendingOrder>> {
+    return this.#read(() => parseOrdersForClose(this.#conn.terminalState.orders));
   }
 
   getSymbolSpec(symbol: string): Promise<SymbolSpec> {

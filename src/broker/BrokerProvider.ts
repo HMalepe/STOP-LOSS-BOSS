@@ -107,12 +107,29 @@ export type Reconciled =
   | { readonly status: "inFlight" }
   | { readonly status: "notFound" };
 
+/** A row close-now couldn't use at all. */
+export interface Unreadable {
+  readonly id: string | null;
+  readonly symbol: string | null;
+  readonly reason: string;
+}
+export interface Lenient<T> {
+  readonly items: T[];
+  readonly unreadable: Unreadable[];
+}
+
 export interface BrokerProvider {
   readonly name: "mock" | "metaapi";
   health(): Promise<BrokerHealth>;
   getAccount(): Promise<AccountInfo>;
   getPositions(): Promise<Position[]>;
   getOrders(): Promise<PendingOrder[]>;
+  /**
+   * Close-now only (R0.5, R4.7): one malformed row must not block the panic button. Rows with a ticket, symbol and side
+   * come back with unknown (NaN) numbers; rows without are listed in `unreadable` for the owner to close in MT5.
+   */
+  getPositionsForClose(): Promise<Lenient<Position>>;
+  getOrdersForClose(): Promise<Lenient<PendingOrder>>;
   getQuote(symbol: string): Promise<Quote>;
   getSymbolSpec(symbol: string): Promise<SymbolSpec>;
   modifyPosition(positionId: string, levels: Levels): Promise<TradeResult>;

@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23: Close-now reads positions/orders leniently (getPositionsForClose): a row with ticket+symbol+side is closed with unknown numbers; a row without is listed as a loud "NOT closed, close it in MT5" warning. Before: one bad row anywhere → 503 on the panic button
 - 2026-11-23: Restart recovery: items "pending" at claim, "sending" before first send. Normal runs refuse to send if that write fails; close-now never waits on it (closes are safe to resend). Boot: pending → skipped "not sent" (retryable), sending → unknown
 - 2026-11-23 (owner): Cross-account pair, same size, no stops: concurrent legs, failed leg → auto-close the filled one, survivor prompt, per-account gates ([ADR-0011](docs/adr/0011-cross-account-pair.md))
 - 2026-11-23: Close-now ignores the kill switch (R4.2) and LIVE_NOT_ENABLED (risk-reducing) but refuses ACCOUNT_MODE_MISMATCH; typed confirm "CLOSE". Retry-failed = new plan of `failed` items only (never `unknown`), through the normal execute path
@@ -79,7 +80,7 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - **Observability**: typed event hook for limiter waits, pauses, settles, reconcile polls, revalidate, abort; item wall time; metrics + alerts
   (any unknown > 0, long executions, error rate, breaker open). SDK logger at info+.
 - **createBroker() factory** failing closed: account tradeMode must match TRADING_MODE.
-- Lenient close-now parse (one bad row must not block the panic button); health routes; history lookup by clientId (Phase 09).
+- ~~Lenient close-now parse~~ done; health routes; history lookup by clientId (Phase 09).
 - ADR-0010 one-request panic close: verify on demo first.
 
 ## Open questions for the owner
