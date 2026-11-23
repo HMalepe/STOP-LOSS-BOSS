@@ -5,6 +5,8 @@ import { getLogger } from "@/server/logger";
 import { makeAdminRoutes } from "./adminRoutes";
 import { makeAuthRoutes } from "./authRoutes";
 import { makeGuard } from "./guard";
+import { makeTradingRoutes } from "./tradingRoutes";
+import { getTradingServices } from "@/server/trading/services";
 
 export const guard = makeGuard(
   getAuthDeps,
@@ -23,3 +25,5 @@ export const authRoutes = {
 };
 
 export const adminRoutes = makeAdminRoutes(guard, () => getEnv().TRADING_HALTED);
+
+export const tradingRoutes = makeTradingRoutes(guard, getTradingServices);
