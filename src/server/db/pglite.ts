@@ -2,6 +2,7 @@
  * Embedded Postgres (PGlite): real Postgres semantics with zero setup. Used for tests (in memory) and for mock mode
  * (DATABASE_URL=pglite://<dir>, persisted to disk), so `pnpm dev` runs fully offline. Demo/live use Supabase.
  */
+import { mkdirSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import type { Db } from "./sql";
 
@@ -27,6 +28,8 @@ function wrap(pg: Conn, root: PGlite, inTx: boolean): Db {
 
 /** `dataDir` undefined = in memory. */
 export function pgliteDb(dataDir?: string): Db {
+  // PGlite won't create missing parents: a fresh clone has no .data/ yet.
+  if (dataDir !== undefined) mkdirSync(dataDir, { recursive: true });
   const pg = dataDir === undefined ? new PGlite() : new PGlite(dataDir);
   return wrap(pg, pg, false);
 }

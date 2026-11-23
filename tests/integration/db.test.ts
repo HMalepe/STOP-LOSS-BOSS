@@ -119,3 +119,20 @@ describe("constraints that protect money", () => {
     expect(await db.query("select * from accounts where metaapi_account_id = 'tx1'")).toEqual([]);
   });
 });
+
+describe("embedded database on disk", () => {
+  it("creates its directory on a fresh clone (no .data/ yet)", async () => {
+    const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
+    const path = await import("node:path");
+    const join = (...parts: string[]) => path.join(...parts);
+    const { tmpdir } = await import("node:os");
+    const root = mkdtempSync(join(tmpdir(), "od-"));
+    const dir = join(root, "nested", "order-desk");
+    const { pgliteDb } = await import("@/server/db/pglite");
+    const db = pgliteDb(dir);
+    expect(await db.query("select 1 as one")).toEqual([{ one: 1 }]);
+    await db.close();
+    expect(existsSync(dir)).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+});

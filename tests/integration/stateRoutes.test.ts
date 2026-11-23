@@ -5,14 +5,10 @@ import { ManualClock } from "@/domain/clock";
 import type { Position, SymbolSpec } from "@/domain/types";
 import { makeTradingRoutes } from "@/server/http/tradingRoutes";
 import { setKillSwitch } from "@/server/killSwitch";
-import {
-  AccountModeError,
-  assertAccountMatchesMode,
-  demoMockBroker,
-  type TradingServices,
-} from "@/server/trading/services";
+import { AccountModeError, assertAccountMatchesMode, type TradingServices } from "@/server/trading/services";
 import { SpecCache } from "@/server/trading/specCache";
 import { pagePositions, summarise } from "@/server/trading/state";
+import { mockServices } from "../helpers/services";
 import { get, signedIn, type SignedIn } from "../helpers/session";
 
 let s: SignedIn;
@@ -21,14 +17,7 @@ let svc: TradingServices;
 
 beforeEach(async () => {
   s = await signedIn();
-  broker = demoMockBroker(s.clock);
-  svc = {
-    broker,
-    specs: new SpecCache((x) => broker.getSymbolSpec(x), s.clock),
-    mode: "mock",
-    envHalted: false,
-    clock: s.clock,
-  };
+  ({ svc, broker } = mockServices(s.db, s.clock));
 });
 afterEach(async () => {
   await s.db.close();
@@ -230,6 +219,7 @@ describe("process services", () => {
     vi.stubEnv("SESSION_SECRET", "t".repeat(48));
     vi.stubEnv("TRADING_MODE", "mock");
     vi.stubEnv("TRADING_HALTED", "1");
+    vi.stubEnv("DATABASE_URL", "pglite://memory");
     const { getTradingServices } = await import("@/server/trading/services");
     const a = await getTradingServices();
     expect(await getTradingServices()).toBe(a);

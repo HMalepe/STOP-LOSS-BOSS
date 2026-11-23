@@ -4,8 +4,10 @@ import { BrokerError } from "@/broker/BrokerProvider";
 import { killSwitchState } from "@/server/killSwitch";
 import { AccountModeError, type TradingServices } from "@/server/trading/services";
 import { createPlan, LATER_ACTIONS, loadPlan, planBody } from "@/server/trading/plans";
+import { progressView, sseFrames, startExecution } from "@/server/trading/executions";
 import { loadState, pagePositions } from "@/server/trading/state";
 import { auditKey, audit } from "@/server/audit/audit";
+import type { Db } from "@/server/db/sql";
 import type { makeGuard } from "./guard";
 import { fail, ok } from "./respond";
 import { parseJson } from "./request";
@@ -142,5 +144,138 @@ export function makeTradingRoutes(
         const expired = plan.status === "created" && plan.expiresAt <= deps.clock.now();
         return ok({ ...plan.summary, status: expired ? "expired" : plan.status, items: plan.items });
       })(req),
+
+    /** POST /api/plans/:id/execute → 202 { executionId }. Runs the STORED items only; the body is ignored. */
+    execute: (req: Request, id: string) =>
+      guard.authed({}, async ({ deps, session }) => {
+        const plan = await loadPlan(deps.db, session.userId, id);
+        if (plan === null) return fail("NOT_FOUND", "No such plan.");
+        return withBroker(services, async (svc) => {
+          const r = await startExecution(svc, deps.db, plan);
+          const key = auditKey(deps.sessionSecret);
+          const at = new Date(svc.clock.now());
+          if (!r.ok) {
+            await audit(
+              deps.db,
+              key,
+              { actor: "owner", action: "execution.refused", subject: plan.id, details: { code: r.code } },
+              at,
+            );
+            const details =
+              r.code === "PRICE_MOVED"
+                ? r.details
+                : r.code === "PLAN_ALREADY_EXECUTED"
+                  ? { executionId: r.executionId }
+                  : undefined;
+            return fail(r.code, r.message, details === undefined ? {} : { details });
+          }
+          await audit(
+            deps.db,
+            key,
+            {
+              actor: "owner",
+              action: "execution.started",
+              subject: r.executionId,
+              details: { planId: plan.id, count: r.count, skippedUpFront: r.skipped.length, mode: svc.mode },
+            },
+            at,
+          );
+          return ok({ executionId: r.executionId, count: r.count, skipped: r.skipped }, 202);
+        });
+      })(req),
+
+    /** GET /api/executions/:id: status, progress, counts. */
+    execution: (req: Request, id: string) =>
+      guard.authed({}, async ({ deps, session }) => {
+        const row = await ownedExecution(deps.db, session.userId, id);
+        if (row === null) return fail("NOT_FOUND", "No such execution.");
+        return withBroker(services, (svc) => {
+          const live = svc.runner.status(id);
+          if (live !== undefined) {
+            return Promise.resolve(
+              ok({
+                executionId: id,
+                planId: live.planId,
+                state: live.state,
+                progress: progressView(live.progress),
+                ...(live.summary === undefined ? {} : { summary: live.summary }),
+              }),
+            );
+          }
+          // Not in this process any more (restart, or pruned): the database has the record.
+          return Promise.resolve(
+            ok({ executionId: id, planId: row.plan_id, state: row.status, summary: row.summary }),
+          );
+        });
+      })(req),
+
+    /**
+     * GET /api/executions/:id/stream: Server-Sent Events. Resumes after Last-Event-ID (or ?after=). A heartbeat comment
+     * every 15 s keeps proxies from closing a quiet stream. Ends with `complete`, or `error` if the run isn't here.
+     */
+    stream: (req: Request, id: string) =>
+      guard.authed({}, async ({ deps, session }) => {
+        const row = await ownedExecution(deps.db, session.userId, id);
+        if (row === null) return fail("NOT_FOUND", "No such execution.");
+        return withBroker(services, (svc) => {
+          const lastRaw = req.headers.get("last-event-id") ?? new URL(req.url).searchParams.get("after");
+          const last = lastRaw !== null && /^\d{1,9}$/.test(lastRaw) ? Number(lastRaw) : -1;
+          const known = svc.runner.status(id);
+          const encoder = new TextEncoder();
+          const body = new ReadableStream<Uint8Array>({
+            async start(controller) {
+              const send = (text: string) => {
+                controller.enqueue(encoder.encode(text));
+              };
+              const beat = setInterval(() => {
+                send(": keep-alive\n\n");
+              }, 15_000);
+              (beat as { unref?: () => void }).unref?.();
+              try {
+                if (known?.replayable !== true) {
+                  send(
+                    `event: error\ndata: ${JSON.stringify({
+                      code: "NOT_FOUND",
+                      message: "This run's live events aren't available. Load its status instead.",
+                    })}\n\n`,
+                  );
+                  return;
+                }
+                for await (const { seq, event } of svc.runner.events(id, last)) {
+                  if (req.signal.aborted) break;
+                  send(sseFrames(seq, event));
+                }
+              } finally {
+                clearInterval(beat);
+                controller.close();
+              }
+            },
+          });
+          return Promise.resolve(
+            new Response(body, {
+              status: 200,
+              headers: {
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-store, no-transform",
+                Connection: "keep-alive",
+                "X-Accel-Buffering": "no",
+              },
+            }),
+          );
+        });
+      })(req),
   };
+}
+
+async function ownedExecution(
+  db: Db,
+  userId: string,
+  id: string,
+): Promise<{ plan_id: string; status: string; summary: unknown } | null> {
+  if (!z.uuid().safeParse(id).success) return null;
+  const [row] = await db.query<{ plan_id: string; status: string; summary: unknown }>(
+    "select e.plan_id, e.status, e.summary from executions e join plans p on p.id = e.plan_id where e.id = $1 and p.user_id = $2",
+    [id, userId],
+  );
+  return row ?? null;
 }

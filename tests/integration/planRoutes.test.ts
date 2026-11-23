@@ -5,8 +5,8 @@ import type { PlanItem } from "@/domain/types";
 import { auditKey, verifyChain } from "@/server/audit/audit";
 import { makeTradingRoutes } from "@/server/http/tradingRoutes";
 import { itemsHash, PLAN_TTL_MS } from "@/server/trading/plans";
-import { demoMockBroker, type TradingServices } from "@/server/trading/services";
-import { SpecCache } from "@/server/trading/specCache";
+import type { TradingServices } from "@/server/trading/services";
+import { mockServices } from "../helpers/services";
 import { get, post, signedIn, type SignedIn } from "../helpers/session";
 
 let s: SignedIn;
@@ -16,14 +16,7 @@ let routes: ReturnType<typeof makeTradingRoutes>;
 
 beforeEach(async () => {
   s = await signedIn();
-  broker = demoMockBroker(s.clock);
-  svc = {
-    broker,
-    specs: new SpecCache((x) => broker.getSymbolSpec(x), s.clock),
-    mode: "mock",
-    envHalted: false,
-    clock: s.clock,
-  };
+  ({ svc, broker } = mockServices(s.db, s.clock));
   routes = makeTradingRoutes(s.guard, () => Promise.resolve(svc));
 });
 afterEach(async () => {
