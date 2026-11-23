@@ -31,7 +31,7 @@ test("password → six code boxes (typed, auto-submits) → the desk", async ({ 
   await expect(page.getByLabel("Digit 1")).toBeFocused();
   await page.keyboard.type(code());
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { name: "Order Desk", level: 1 })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Symbol" })).toBeVisible();
   // Signed in: /login sends you back to the desk.
   await page.goto("/login");
   await expect(page).toHaveURL(/\/$/);

@@ -17,7 +17,7 @@
 | 04 | Execution engine | ✅ | 554 tests + `pnpm load` (1,000 close-now 22 s, 0 duplicates). Board review (safety, SRE, QA): all critical/high fixed |
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
 | 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
-| 07 | UI | 🟨 | Stage 1 ✅ design system + shell ("The Observatory", docs/12) · A ✅ trading controls · B ✅ sign-in |
+| 07 | UI | 🟨 | Stage 1 ✅ design system + shell ("The Observatory", docs/12) · A ✅ trading controls · B ✅ sign-in · C ✅ live desk wired to the API. Next: History, Settings, PWA (M5) |
 | 08 | Order Desk (bulk orders, presets, ladders) | ⬜ | |
 | 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
