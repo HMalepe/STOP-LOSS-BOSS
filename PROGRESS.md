@@ -19,12 +19,14 @@
 | 06 | API routes | 🟨 | M1 ✅ state + positions · M2 ✅ plans |
 | 07 | UI | ⬜ | |
 | 08 | Order Desk (bulk orders, presets, ladders) | ⬜ | |
+| 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
 | 10 | Hardening and go-live | ⬜ | |
 
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23 (owner): Cross-account pair, same size, no stops: concurrent legs, failed leg → auto-close the filled one, survivor prompt, per-account gates ([ADR-0011](docs/adr/0011-cross-account-pair.md))
 - 2026-11-23: Plans store summary + exact items + items hash (0003); preview refuses a quote older than 3 s (PRICE_STALE, R7.2); market/ladder/cancel → 400 until Phase 08
 - 2026-11-23: Broker factory fails closed: account type must match TRADING_MODE before first use; mock mode gets a seeded demo book
 - 2026-11-23: Throttling is reserve-then-verify under an advisory lock; per network (IPv4 / IPv6 /64) + per account on the second factor only (never account-wide on the password)
