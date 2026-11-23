@@ -5,6 +5,8 @@ import { killSwitchState } from "@/server/killSwitch";
 import { AccountModeError, type TradingServices } from "@/server/trading/services";
 import { createPlan, LATER_ACTIONS, loadPlan, planBody } from "@/server/trading/plans";
 import { progressView, sseFrames, startExecution } from "@/server/trading/executions";
+import { closeNow, closeNowBody, history, retryFailed } from "@/server/trading/manage";
+import type { PlanSummary } from "@/server/trading/plans";
 import { loadState, pagePositions } from "@/server/trading/state";
 import { auditKey, audit } from "@/server/audit/audit";
 import type { Db } from "@/server/db/sql";
@@ -264,6 +266,74 @@ export function makeTradingRoutes(
           );
         });
       })(req),
+
+    /** POST /api/close-now: build, record and run the close plan in one call, on the urgent lane. */
+    closeNow: guard.authed({}, async ({ req, deps, session }) => {
+      const body = await parseJson(req, closeNowBody);
+      if (!body.ok) return fail("VALIDATION", body.message);
+      return withBroker(services, async (svc) => {
+        const at = new Date(svc.clock.now());
+        const r = await closeNow(
+          svc,
+          deps.db,
+          session.userId,
+          body.value,
+          planAudit(deps, at, "close_now.requested", { cancelPending: body.value.cancelPending }),
+        );
+        if (!r.ok) {
+          if (r.code === "NOTHING_TO_CLOSE") return fail("PLAN_INVALID", r.message, { details: [] });
+          await audit(
+            deps.db,
+            auditKey(deps.sessionSecret),
+            { actor: "owner", action: "close_now.refused", details: { code: r.code } },
+            at,
+          );
+          return fail(r.code, r.message, r.code === "PRICE_MOVED" ? { details: r.details } : {});
+        }
+        await audit(
+          deps.db,
+          auditKey(deps.sessionSecret),
+          {
+            actor: "owner",
+            action: "execution.started",
+            subject: r.executionId,
+            details: { planId: r.summary.id, count: r.summary.count, urgent: true, mode: svc.mode },
+          },
+          at,
+        );
+        return ok({ executionId: r.executionId, plan: r.summary }, 202);
+      });
+    }),
+
+    /** POST /api/executions/:id/retry-failed → a new PlanSummary of the failed items (preview it, then execute it). */
+    retryFailed: (req: Request, id: string) =>
+      guard.authed({}, async ({ deps, session }) =>
+        withBroker(services, async (svc) => {
+          const r = await retryFailed(
+            svc,
+            deps.db,
+            session.userId,
+            id,
+            planAudit(deps, new Date(svc.clock.now()), "plan.created", { retryOf: id }),
+          );
+          if (r.ok) return ok(r.summary, 201);
+          switch (r.code) {
+            case "NOT_FOUND":
+              return fail("NOT_FOUND", r.message);
+            case "STILL_RUNNING":
+              return fail("VALIDATION", r.message);
+            case "NOTHING_TO_RETRY":
+              return fail("PLAN_INVALID", r.message, { details: [] });
+          }
+        }),
+      )(req),
+
+    /** GET /api/history?cursor= : past executions, newest first. */
+    history: guard.authed({}, async ({ req, deps, session }) => {
+      const cursor = new URL(req.url).searchParams.get("cursor") ?? undefined;
+      const page = await history(deps.db, session.userId, cursor === "" ? undefined : cursor);
+      return page === null ? fail("VALIDATION", "cursor: not a cursor from this list") : ok(page);
+    }),
   };
 }
 
@@ -278,4 +348,25 @@ async function ownedExecution(
     [id, userId],
   );
   return row ?? null;
+}
+
+/** The audit writer every plan-storing path shares (same transaction as the plan row). */
+function planAudit(
+  deps: { readonly db: Db; readonly sessionSecret: string },
+  at: Date,
+  action: string,
+  details: Record<string, unknown> = {},
+) {
+  return (t: Db, summary: PlanSummary) =>
+    audit(
+      t,
+      auditKey(deps.sessionSecret),
+      {
+        actor: "owner",
+        action,
+        subject: summary.id,
+        details: { action: summary.action, symbol: summary.symbol, count: summary.count, ...details },
+      },
+      at,
+    );
 }

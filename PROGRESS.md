@@ -4,7 +4,7 @@
 
 ## Now
 - Phase: 06 (API routes) 🟨 in progress. Phase 05 ✅
-- Current milestone: M4 close-now, retry-failed, history, kill switch admin
+- Current milestone: M5 contract tests + OpenAPI
 - Blockers: **Q2** (Exness demo connected to MetaApi) for the live [T] tests in Phase 03. MockBroker and adapter code can start without it
 
 ## Phases
@@ -16,7 +16,7 @@
 | 03 | Broker adapter | ✅ | 460 tests. SDK contract verified from the package. Board review (architect, trading systems, SRE): 1 critical, 8 high/must-fix fixed. Live demo contract run pending Q2 |
 | 04 | Execution engine | ✅ | 554 tests + `pnpm load` (1,000 close-now 22 s, 0 duplicates). Board review (safety, SRE, QA): all critical/high fixed |
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
-| 06 | API routes | 🟨 | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE |
+| 06 | API routes | 🟨 | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history |
 | 07 | UI | ⬜ | |
 | 08 | Order Desk (bulk orders, presets, ladders) | ⬜ | |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
@@ -25,6 +25,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23: Close-now ignores the kill switch (R4.2) and LIVE_NOT_ENABLED (risk-reducing) but refuses ACCOUNT_MODE_MISMATCH; typed confirm "CLOSE". Retry-failed = new plan of `failed` items only (never `unknown`), through the normal execute path
 - 2026-11-23: Execute idempotency lives in the DB (plan status flip + executions insert, one tx). Drift guard: any invalid/frozen modify → PRICE_MOVED whole plan; R7.1 mismatches skipped up front and reported in the 202
 - 2026-11-23: Plans store summary + exact items + items hash (0003); preview refuses a quote older than 3 s (PRICE_STALE, R7.2); market/ladder/cancel → 400 until Phase 08
 - 2026-11-23: Broker factory fails closed: account type must match TRADING_MODE before first use; mock mode gets a seeded demo book

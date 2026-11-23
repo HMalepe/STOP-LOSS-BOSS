@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildPlan, type PlanDraft, type PlanError, type PlanRequest } from "@/domain/plan";
-import type { PlanItem, Skipped } from "@/domain/types";
+import type { PlanItem, Position, Skipped } from "@/domain/types";
 import { canonical } from "../audit/audit";
 import { sha256 } from "../auth/crypto";
 import type { Db } from "../db/sql";
@@ -129,8 +129,24 @@ export async function createPlan(
   }
   const built = buildPlan(req, { positions, orders, quote, spec });
   if (!built.ok) return built;
-  const plan = built.plan;
+  const summary = await storePlan(svc, db, userId, built.plan, req, positions, record);
+  return { ok: true, summary };
+}
 
+/**
+ * Store a built plan: summary + exact items + their hash, 30 s expiry, in one transaction with its audit row.
+ * Shared by preview, close-now and retry-failed, so every path that executes goes through the same record.
+ */
+export async function storePlan(
+  svc: Pick<TradingServices, "clock" | "mode">,
+  db: Db,
+  userId: string,
+  plan: PlanDraft,
+  params: unknown,
+  positions: readonly Position[],
+  record: (tx: Db, summary: PlanSummary) => Promise<unknown>,
+): Promise<PlanSummary> {
+  const now = svc.clock.now();
   const byId = new Map(positions.map((p) => [p.id, p.volume]));
   const lots = plan.items.reduce((a, i) => (i.op === "close" ? a + (byId.get(i.positionId) ?? 0) : a), 0);
   const id = randomUUID();
@@ -138,7 +154,7 @@ export async function createPlan(
   const summary: PlanSummary = {
     id,
     action: plan.action,
-    symbol,
+    symbol: plan.symbol,
     expiresAt,
     quote:
       plan.quote === null
@@ -157,8 +173,8 @@ export async function createPlan(
         id,
         userId,
         plan.action,
-        symbol,
-        JSON.stringify(req),
+        plan.symbol,
+        JSON.stringify(params),
         JSON.stringify(plan.items),
         itemsHash(plan.items),
         JSON.stringify(summary),
@@ -168,7 +184,7 @@ export async function createPlan(
     );
     await record(t, summary);
   });
-  return { ok: true, summary };
+  return summary;
 }
 
 export interface StoredPlan {
