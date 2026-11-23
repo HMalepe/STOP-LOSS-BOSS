@@ -13,7 +13,12 @@ export const liveBody = z.object({ accountId: z.uuid(), enabled: z.boolean() });
 
 const REAUTH = "Enter a fresh code from your authenticator to do this.";
 
-export function makeAdminRoutes(guard: ReturnType<typeof makeGuard>, envHalted: () => boolean) {
+export function makeAdminRoutes(
+  guard: ReturnType<typeof makeGuard>,
+  envHalted: () => boolean,
+  /** Called after the kill switch goes ON: stop every running batch except close-now (security review M3). */
+  onHalt: () => Promise<unknown> = () => Promise.resolve(),
+) {
   return {
     killSwitchGet: guard.authed({}, async ({ deps }) => ok(await killSwitchState(deps.db, envHalted()))),
 
@@ -25,6 +30,8 @@ export function makeAdminRoutes(guard: ReturnType<typeof makeGuard>, envHalted: 
         return fail("REAUTH_REQUIRED", REAUTH);
       }
       await setKillSwitch(deps, body.value.halted, session);
+      // Never let a failure to reach the runner turn "halt" into an error: the flag is already set.
+      if (body.value.halted) await onHalt().catch(() => undefined);
       return ok(await killSwitchState(deps.db, envHalted()));
     }),
 

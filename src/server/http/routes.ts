@@ -6,7 +6,7 @@ import { makeAdminRoutes } from "./adminRoutes";
 import { makeAuthRoutes } from "./authRoutes";
 import { makeGuard } from "./guard";
 import { makeTradingRoutes } from "./tradingRoutes";
-import { getTradingServices } from "@/server/trading/services";
+import { getTradingServices, startedTradingServices } from "@/server/trading/services";
 
 export const guard = makeGuard(
   getAuthDeps,
@@ -24,6 +24,13 @@ export const authRoutes = {
   session: guard.open(({ req }) => auth.session(req)),
 };
 
-export const adminRoutes = makeAdminRoutes(guard, () => getEnv().TRADING_HALTED);
+export const adminRoutes = makeAdminRoutes(
+  guard,
+  () => getEnv().TRADING_HALTED,
+  async () => {
+    const svc = await startedTradingServices();
+    svc?.runner.abortAll({ keepUrgent: true });
+  },
+);
 
 export const tradingRoutes = makeTradingRoutes(guard, getTradingServices);

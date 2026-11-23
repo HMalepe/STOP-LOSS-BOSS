@@ -18,7 +18,7 @@ import { makeRevalidator } from "@/execution/revalidate";
 import { realScheduler, type Scheduler } from "@/execution/scheduler";
 import { getDb } from "../context";
 import type { Db } from "../db/sql";
-import { DbExecutionStore } from "./executions";
+import { DbExecutionStore, recoverInterrupted } from "./executions";
 import { SpecCache } from "./specCache";
 
 export interface TradingServices {
@@ -28,6 +28,8 @@ export interface TradingServices {
   readonly envHalted: boolean;
   readonly clock: Clock;
   readonly runner: JobRunner;
+  /** Most positions one preview may touch (MAX_POSITIONS_PER_BATCH). Close-now is exempt. */
+  readonly maxPerBatch: number;
   /** The MetaApi account id (the accounts row whose live_enabled counts). null in mock mode. */
   readonly accountRef: string | null;
 }
@@ -44,7 +46,7 @@ export function buildRunner(
 ): JobRunner {
   return new InProcessRunner({
     broker,
-    store: new DbExecutionStore(db),
+    store: new DbExecutionStore(db, clock),
     scheduler,
     limiter: new CreditLimiter({
       capacity: METAAPI_CREDITS.capacity,
@@ -184,13 +186,18 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
           }),
         );
   await assertAccountMatchesMode(broker, env.TRADING_MODE);
+  const db = await getDb();
+  const runner = buildRunner(broker, db, clock);
+  // A fresh process holds no runs: anything still "running" in the database was cut off by a restart.
+  await recoverInterrupted(db, (id) => runner.status(id)?.state === "running");
   return {
     broker,
     specs: new SpecCache((s) => broker.getSymbolSpec(s), clock),
     mode: env.TRADING_MODE,
     envHalted: env.TRADING_HALTED,
     clock,
-    runner: buildRunner(broker, await getDb(), clock),
+    runner,
+    maxPerBatch: env.MAX_POSITIONS_PER_BATCH,
     accountRef: env.TRADING_MODE === "mock" ? null : (env.METAAPI_ACCOUNT_ID ?? null),
   };
 }
@@ -201,5 +208,10 @@ export function getTradingServices(): Promise<TradingServices> {
     shared.services = undefined;
     throw e;
   });
+  return shared.services;
+}
+
+/** The services if they've already started; never connects a broker just to ask. */
+export function startedTradingServices(): Promise<TradingServices> | undefined {
   return shared.services;
 }

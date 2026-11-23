@@ -29,7 +29,7 @@ import { makeTradingRoutes } from "@/server/http/tradingRoutes";
 import { setKillSwitch } from "@/server/killSwitch";
 import { PLAN_TTL_MS } from "@/server/trading/plans";
 import type { TradingServices } from "@/server/trading/services";
-import { mockServices } from "../helpers/services";
+import { asAccount, mockServices } from "../helpers/services";
 import { get, ORIGIN, post, signedIn, type SignedIn } from "../helpers/session";
 
 let s: SignedIn;
@@ -171,13 +171,13 @@ describe("every error code in docs/04, from a real request", () => {
   });
 
   it("LIVE_NOT_ENABLED and ACCOUNT_MODE_MISMATCH", async () => {
-    const live = makeTradingRoutes(s.guard, () =>
-      Promise.resolve({ ...svc, mode: "live", accountRef: "acc-9" }),
-    );
+    const live = (t: "DEMO" | "REAL") =>
+      makeTradingRoutes(s.guard, () =>
+        Promise.resolve({ ...svc, broker: asAccount(broker, t), mode: "live", accountRef: "acc-9" }),
+      );
     const id = await planId();
-    await expectError(await exec(id, live), "LIVE_NOT_ENABLED");
-    await s.db.query("insert into accounts (metaapi_account_id, live_enabled) values ('acc-9', true)");
-    await expectError(await exec(id, live), "ACCOUNT_MODE_MISMATCH");
+    await expectError(await exec(id, live("REAL")), "LIVE_NOT_ENABLED");
+    await expectError(await exec(id, live("DEMO")), "ACCOUNT_MODE_MISMATCH");
   });
 
   it("BROKER_UNAVAILABLE", async () => {

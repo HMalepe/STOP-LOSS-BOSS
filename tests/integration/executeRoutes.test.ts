@@ -5,7 +5,7 @@ import { makeTradingRoutes } from "@/server/http/tradingRoutes";
 import { setKillSwitch } from "@/server/killSwitch";
 import { PLAN_TTL_MS } from "@/server/trading/plans";
 import type { TradingServices } from "@/server/trading/services";
-import { mockServices } from "../helpers/services";
+import { asAccount, mockServices } from "../helpers/services";
 import { get, post, signedIn, type SignedIn } from "../helpers/session";
 
 let s: SignedIn;
@@ -86,7 +86,7 @@ describe("POST /api/plans/:id/execute", () => {
     const actions = (await s.db.query<{ action: string }>("select action from audit_log order by id")).map(
       (r) => r.action,
     );
-    expect(actions.slice(-2)).toEqual(["plan.created", "execution.started"]);
+    expect(actions.slice(-3)).toEqual(["plan.created", "execution.started", "execution.complete"]);
     expect((await verifyChain(s.db, auditKey(s.deps.sessionSecret))).ok).toBe(true);
   });
 
@@ -129,14 +129,18 @@ describe("POST /api/plans/:id/execute", () => {
   });
 
   it("docs/06 #12: live without live_enabled → LIVE_NOT_ENABLED; live on a non-REAL account → ACCOUNT_MODE_MISMATCH", async () => {
-    const live = makeTradingRoutes(s.guard, () =>
-      Promise.resolve({ ...svc, mode: "live", accountRef: "acc-1" }),
-    );
+    const live = (tradeMode: "DEMO" | "REAL") =>
+      makeTradingRoutes(s.guard, () =>
+        Promise.resolve({ ...svc, broker: asAccount(broker, tradeMode), mode: "live", accountRef: "acc-1" }),
+      );
     const id = await preview();
-    const r1 = await live.execute(post(`/api/plans/${id}/execute`, {}, s.cookie), id);
+    const r1 = await live("REAL").execute(post(`/api/plans/${id}/execute`, {}, s.cookie), id);
     expect([r1.status, (await errorOf(r1)).code]).toEqual([403, "LIVE_NOT_ENABLED"]);
+    // The account type is checked before the opt-in: with live off, a DEMO account still says MISMATCH.
+    const r0 = await live("DEMO").execute(post(`/api/plans/${id}/execute`, {}, s.cookie), id);
+    expect((await errorOf(r0)).code).toBe("ACCOUNT_MODE_MISMATCH");
     await s.db.query("insert into accounts (metaapi_account_id, live_enabled) values ('acc-1', true)");
-    const r2 = await live.execute(post(`/api/plans/${id}/execute`, {}, s.cookie), id);
+    const r2 = await live("DEMO").execute(post(`/api/plans/${id}/execute`, {}, s.cookie), id);
     expect([r2.status, (await errorOf(r2)).code, trades()]).toEqual([403, "ACCOUNT_MODE_MISMATCH", 0]);
   });
 

@@ -129,6 +129,16 @@ export async function createPlan(
   }
   const built = buildPlan(req, { positions, orders, quote, spec });
   if (!built.ok) return built;
+  if (built.plan.items.length > svc.maxPerBatch) {
+    return {
+      ok: false,
+      error: {
+        code: "PLAN_INVALID",
+        message: `That's ${String(built.plan.items.length)} positions; one action may change at most ${String(svc.maxPerBatch)}. Narrow the filter (side, magic) or raise MAX_POSITIONS_PER_BATCH.`,
+        details: [],
+      },
+    };
+  }
   const summary = await storePlan(svc, db, userId, built.plan, req, positions, record);
   return { ok: true, summary };
 }
@@ -167,6 +177,10 @@ export async function storePlan(
     mode: svc.mode,
   };
   await db.tx(async (t) => {
+    // Housekeeping (security review L4): previews nobody executed are worthless after a day.
+    await t.query("delete from plans where status = 'created' and expires_at < $1", [
+      new Date(now - 24 * 3_600_000).toISOString(),
+    ]);
     await t.query(
       "insert into plans (id, user_id, action, symbol, params, items, input_hash, summary, created_at, expires_at) values ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8::jsonb, $9, $10)",
       [

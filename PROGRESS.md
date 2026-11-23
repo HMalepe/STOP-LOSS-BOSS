@@ -3,8 +3,8 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 06 (API routes) 🟨 in progress. Phase 05 ✅
-- Current milestone: phase-end reviews (security-engineer, qa-lead)
+- Phase: 07 (UI) ⬜, next up. Phase 06 ✅
+- Current milestone: none
 - Blockers: **Q2** (Exness demo connected to MetaApi) for the live [T] tests in Phase 03. MockBroker and adapter code can start without it
 
 ## Phases
@@ -16,7 +16,7 @@
 | 03 | Broker adapter | ✅ | 460 tests. SDK contract verified from the package. Board review (architect, trading systems, SRE): 1 critical, 8 high/must-fix fixed. Live demo contract run pending Q2 |
 | 04 | Execution engine | ✅ | 554 tests + `pnpm load` (1,000 close-now 22 s, 0 duplicates). Board review (safety, SRE, QA): all critical/high fixed |
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
-| 06 | API routes | 🟨 | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI · reviews next |
+| 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
 | 07 | UI | ⬜ | |
 | 08 | Order Desk (bulk orders, presets, ladders) | ⬜ | |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
@@ -81,6 +81,7 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - ADR-0010 one-request panic close: verify on demo first.
 
 ## Open questions for the owner
+- **Q3** Require a fresh authenticator code before each EXECUTE in live mode? Safer against a stolen unlocked phone; costs one code per live batch. Close-now stays exempt either way.
 - **Q2** (needed by Phase 03) Is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet? R0.2 detects netting at runtime anyway.
 
 ## Unverified facts (must be tested on Exness demo via MetaApi, Phase 3)

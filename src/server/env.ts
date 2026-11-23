@@ -55,6 +55,8 @@ const schema = z
 
     // Caps (R5.2, OD7). Upper bounds are sanity limits, not recommendations.
     MAX_ORDERS_PER_ACTION: int(1, 500, 100),
+    // Blast-radius cap on one modify/close-at batch (security review H2). Close-now is exempt: it's how you get flat.
+    MAX_POSITIONS_PER_BATCH: int(1, 5000, 1000),
     MAX_TOTAL_LOTS: z.coerce.number().positive().max(100).default(5),
     MAX_RISK_PCT_PER_ACTION: z.coerce.number().positive().max(10).default(2),
 

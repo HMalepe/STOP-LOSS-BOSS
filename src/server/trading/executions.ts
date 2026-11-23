@@ -11,13 +11,16 @@
  *   never sent, and reported in the response. The rest runs.
  * - Closed in the meantime: left in; the executor reports it per item (close-type items count it as done).
  */
-import type { AccountTradeMode } from "@/broker/BrokerProvider";
+import { BrokerError, type AccountTradeMode } from "@/broker/BrokerProvider";
+import type { Clock } from "@/domain/clock";
 import { formatPrice, fromPoints, toPoints } from "@/domain/price";
 import { decideModify, marketFrom, quoteProblems } from "@/domain/rules";
 import type { PlanItem, Skipped } from "@/domain/types";
 import type { ExecutionStore } from "@/execution/idempotency";
 import type { JobRunner } from "@/execution/jobRunner";
 import type { ExecEvent, ItemResult, Progress, Summary } from "@/execution/types";
+import { canonical, type AuditEntry } from "../audit/audit";
+import { sha256 } from "../auth/crypto";
 import type { Db } from "../db/sql";
 import { killSwitchState, tradingGate, type TradingAction } from "../killSwitch";
 import { tradingModeGate } from "../tradingMode";
@@ -25,30 +28,67 @@ import { itemsHash, MAX_QUOTE_AGE_MS, type StoredPlan } from "./plans";
 import type { TradingServices } from "./services";
 
 /** Non-negotiable 7 in the database: flipping the plan and inserting its execution happen together, once. */
+export class PlanExpiredError extends Error {
+  constructor() {
+    super("plan expired before it could be claimed");
+    this.name = "PlanExpiredError";
+  }
+}
+
 export class DbExecutionStore implements ExecutionStore {
   readonly #db: Db;
+  readonly #clock: Clock;
 
-  constructor(db: Db) {
+  constructor(db: Db, clock: Clock) {
     this.#db = db;
+    this.#clock = clock;
   }
 
+  /**
+   * Expiry is re-checked HERE, atomically with the claim (security review M2): the gates and drift guard before it can
+   * take seconds on a slow broker, and a plan must never start sending after its 30 s.
+   */
   claim(planId: string, newExecutionId: string): Promise<{ executionId: string; created: boolean }> {
+    const now = new Date(this.#clock.now()).toISOString();
     return this.#db.tx(async (t) => {
       const won = await t.query(
-        "update plans set status = 'executing' where id = $1 and status = 'created' returning id",
-        [planId],
+        "update plans set status = 'executing' where id = $1 and status = 'created' and expires_at > $2 returning id",
+        [planId, now],
       );
       if (won.length === 1) {
-        await t.query("insert into executions (id, plan_id) values ($1, $2)", [newExecutionId, planId]);
+        await t.query("insert into executions (id, plan_id, started_at) values ($1, $2, $3)", [
+          newExecutionId,
+          planId,
+          now,
+        ]);
         return { executionId: newExecutionId, created: true };
       }
       const [existing] = await t.query<{ id: string }>("select id from executions where plan_id = $1", [
         planId,
       ]);
-      if (existing === undefined) throw new Error(`plan ${planId} is not executable and has no execution`);
+      if (existing === undefined) throw new PlanExpiredError();
       return { executionId: existing.id, created: false };
     });
   }
+}
+
+/**
+ * Boot recovery: a run this process doesn't hold can't still be running. Mark it interrupted so status, history and
+ * retry tell the truth (items with no result row are unknown: they may have been sent).
+ */
+export async function recoverInterrupted(
+  db: Db,
+  isLive: (executionId: string) => boolean,
+): Promise<string[]> {
+  const rows = await db.query<{ id: string }>("select id from executions where status = 'running'");
+  const stale = rows.map((r) => r.id).filter((id) => !isLive(id));
+  for (const id of stale) {
+    await db.query(
+      "update executions set status = 'interrupted', finished_at = now() where id = $1 and status = 'running'",
+      [id],
+    );
+  }
+  return stale;
 }
 
 export type ExecuteRefusal =
@@ -96,7 +136,11 @@ export async function gates(
     liveEnabled: await liveEnabled(db, svc.accountRef),
     brokerTradeMode,
   });
-  return mode.ok ? null : mode;
+  if (mode.ok) return null;
+  // Closing only reduces risk: "live not enabled" never blocks it. (The account TYPE is checked first, so a wrong
+  // account still refuses.) Applies to close-now and to a retry of its failed closes alike.
+  if (action === "close" && mode.code === "LIVE_NOT_ENABLED") return null;
+  return mode;
 }
 
 type Modify = Extract<PlanItem, { op: "modify" }>;
@@ -109,12 +153,17 @@ export async function driftGuard(
   const modifies = plan.items.filter((i): i is Modify => i.op === "modify");
   if (modifies.length === 0) return { ok: true, run: [...plan.items], skipped: [] };
   const symbol = plan.summary.symbol;
+  // The broker may have widened stops/freeze levels since the preview (news): never check against a cached spec here.
+  svc.specs.invalidate(symbol);
   const [positions, quote, spec] = await Promise.all([
     svc.broker.getPositions(),
     svc.broker.getQuote(symbol),
     svc.specs.get(symbol),
   ]);
-  if (svc.clock.now() - quote.time > MAX_QUOTE_AGE_MS || quoteProblems(quote).length > 0) {
+  if (quoteProblems(quote).length > 0) {
+    throw new BrokerError("BAD_DATA", `unusable quote for ${symbol}: ${quoteProblems(quote).join(", ")}`);
+  }
+  if (svc.clock.now() - quote.time > MAX_QUOTE_AGE_MS) {
     return {
       ok: false,
       refusal: {
@@ -177,7 +226,23 @@ export async function driftGuard(
   return { ok: true, run, skipped };
 }
 
-export async function startExecution(svc: TradingServices, db: Db, plan: StoredPlan): Promise<ExecuteResult> {
+/** Writes the audit row for a finished run (same transaction as its summary). */
+export type RecordComplete = (tx: Db, entry: AuditEntry) => Promise<unknown>;
+
+/** R7.1 skips are visible from the start (status, history), not only once the run completes. */
+export async function noteSkipped(db: Db, executionId: string, skipped: readonly Skipped[]): Promise<void> {
+  await db.query("update executions set summary = $2::jsonb where id = $1", [
+    executionId,
+    JSON.stringify({ skippedUpFront: skipped }),
+  ]);
+}
+
+export async function startExecution(
+  svc: TradingServices,
+  db: Db,
+  plan: StoredPlan,
+  record: RecordComplete,
+): Promise<ExecuteResult> {
   const already = async (): Promise<ExecuteResult> => ({
     ok: false,
     code: "PLAN_ALREADY_EXECUTED",
@@ -200,23 +265,38 @@ export async function startExecution(svc: TradingServices, db: Db, plan: StoredP
   const drift = await driftGuard(svc, plan);
   if (!drift.ok) return { ok: false, ...drift.refusal };
 
-  const started = await svc.runner.start(plan.id, drift.run);
+  let started;
+  try {
+    started = await svc.runner.start(plan.id, drift.run, { urgent: plan.summary.action === "close" });
+  } catch (e) {
+    if (e instanceof PlanExpiredError) {
+      return { ok: false, code: "PLAN_EXPIRED", message: "This preview expired (30 s). Preview again." };
+    }
+    throw e;
+  }
   if (!started.ok) return already();
-  void persistResults(svc.runner, db, started.executionId, drift.skipped);
+  await noteSkipped(db, started.executionId, drift.skipped);
+  void persistResults(svc.runner, db, started.executionId, record);
   return { ok: true, executionId: started.executionId, skipped: drift.skipped, count: drift.run.length };
 }
 
-/** Item results land in execution_items as they finish; the summary when the run completes. Never throws. */
+/**
+ * Item results land in execution_items as they finish; on completion the summary, the plan's final status and an
+ * `execution.complete` audit row carrying a hash of every item result (the audit chain covers the outcomes, docs/05).
+ * If saving fails, the run is marked interrupted (best effort) instead of being left "running" forever.
+ */
 export async function persistResults(
   runner: JobRunner,
   db: Db,
   executionId: string,
-  skippedUpFront: readonly Skipped[] = [],
+  record: RecordComplete,
 ): Promise<void> {
+  const results: ItemResult[] = [];
   try {
     for await (const { event } of runner.events(executionId)) {
       if (event.type === "item") {
         const r = event.item;
+        results.push(r);
         await db.query(
           "insert into execution_items (execution_id, idx, op, target_id, state, code, string_code, message, attempts, latency_ms, updated_at) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now()) on conflict (execution_id, idx) do update set state = excluded.state, code = excluded.code, string_code = excluded.string_code, message = excluded.message, attempts = excluded.attempts, latency_ms = excluded.latency_ms, updated_at = now()",
           [
@@ -233,25 +313,66 @@ export async function persistResults(
           ],
         );
       } else {
+        const summary = event.summary;
         await db.tx(async (t) => {
           await t.query(
-            "update executions set status = 'complete', finished_at = $2, summary = $3::jsonb where id = $1",
+            "update executions set status = 'complete', finished_at = $2, summary = coalesce(summary, '{}'::jsonb) || $3::jsonb where id = $1",
             [
               executionId,
-              new Date(event.summary.finishedAt).toISOString(),
-              JSON.stringify({ ...event.summary, skippedUpFront }),
+              new Date(summary.finishedAt).toISOString(),
+              JSON.stringify({ ...summary, outcome: outcomeOf(summary) }),
             ],
           );
           await t.query(
             "update plans set status = 'executed' where id = (select plan_id from executions where id = $1)",
             [executionId],
           );
+          await record(t, {
+            actor: "system",
+            action: "execution.complete",
+            subject: executionId,
+            details: {
+              outcome: outcomeOf(summary),
+              total: summary.total,
+              done: summary.done,
+              failed: summary.failed,
+              unknown: summary.unknown,
+              skipped: summary.skipped,
+              aborted: summary.aborted,
+              resultsHash: sha256(canonical([...results].sort((a, b) => a.index - b.index).map(auditedItem))),
+            },
+          });
         });
       }
     }
   } catch {
-    // A database hiccup must never touch the run itself; the status route still answers from the runner.
+    // Never touch the run itself. Leave a truthful terminal state instead of "running" forever.
+    await db
+      .query(
+        "update executions set status = 'interrupted', finished_at = now() where id = $1 and status = 'running'",
+        [executionId],
+      )
+      .catch(() => undefined);
   }
+}
+
+const auditedItem = (r: ItemResult) => ({
+  index: r.index,
+  op: r.op,
+  targetId: r.targetId,
+  outcome: r.outcome,
+  code: r.code,
+  attempts: r.attempts,
+});
+
+/**
+ * Non-negotiable 6: "complete" alone never means "all done".
+ * all_done · partial (something failed or is unknown) · aborted (stopped before everything was sent) · nothing.
+ */
+export function outcomeOf(p: Summary): "all_done" | "partial" | "aborted" | "nothing" {
+  if (p.total === 0) return "nothing";
+  if (p.aborted) return "aborted";
+  return p.done === p.total ? "all_done" : "partial";
 }
 
 /** SSE (docs/04): progress {done,total,ok,failed} · item {...} · complete {summary} · error {code,message}. */

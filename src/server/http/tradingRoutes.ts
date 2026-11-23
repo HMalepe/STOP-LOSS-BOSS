@@ -4,7 +4,17 @@ import { BrokerError } from "@/broker/BrokerProvider";
 import { killSwitchState } from "@/server/killSwitch";
 import { AccountModeError, type TradingServices } from "@/server/trading/services";
 import { createPlan, LATER_ACTIONS, loadPlan, planBody } from "@/server/trading/plans";
-import { progressView, sseFrames, startExecution } from "@/server/trading/executions";
+import {
+  outcomeOf,
+  progressView,
+  sseFrames,
+  startExecution,
+  type RecordComplete,
+} from "@/server/trading/executions";
+import type { Summary } from "@/execution/types";
+import type { Sequenced } from "@/execution/jobRunner";
+import type { AuthDeps, Session } from "@/server/auth/login";
+import { SessionLimiter, type Budget } from "./sessionLimiter";
 import { closeNow, closeNowBody, history, retryFailed } from "@/server/trading/manage";
 import type { PlanSummary } from "@/server/trading/plans";
 import { loadState, pagePositions } from "@/server/trading/state";
@@ -65,9 +75,22 @@ const PLAN_INVALID_EMPTY = "Nothing to do: no open positions match.";
 export function makeTradingRoutes(
   guard: ReturnType<typeof makeGuard>,
   services: () => Promise<TradingServices>,
+  limiter?: SessionLimiter,
 ) {
+  let lim = limiter;
+  const throttle = (deps: AuthDeps, session: Session, budget: Budget): Response | null => {
+    lim ??= new SessionLimiter(deps.clock);
+    const wait = lim.take(session.idHash, budget);
+    return wait === 0
+      ? null
+      : fail("RATE_LIMITED", "Slow down a moment.", {
+          headers: { "Retry-After": String(Math.ceil(wait / 1000)) },
+        });
+  };
   return {
-    state: guard.authed({}, async ({ req, deps }) => {
+    state: guard.authed({}, async ({ req, deps, session }) => {
+      const limited = throttle(deps, session, "read");
+      if (limited !== null) return limited;
       const q = query(req, stateQuery);
       if (!q.ok) return fail("VALIDATION", q.message);
       return withBroker(services, async (svc) =>
@@ -75,7 +98,9 @@ export function makeTradingRoutes(
       );
     }),
 
-    positions: guard.authed({}, async ({ req }) => {
+    positions: guard.authed({}, async ({ req, deps, session }) => {
+      const limited = throttle(deps, session, "read");
+      if (limited !== null) return limited;
       const q = query(req, positionsQuery);
       if (!q.ok) return fail("VALIDATION", q.message);
       const { symbol, side, cursor } = q.value;
@@ -92,6 +117,8 @@ export function makeTradingRoutes(
 
     /** POST /api/plans: a dry run. Nothing is sent to the broker; the plan is stored for 30 s. */
     createPlan: guard.authed({}, async ({ req, deps, session }) => {
+      const limited = throttle(deps, session, "plan");
+      if (limited !== null) return limited;
       const raw = await parseJson(req, z.object({ action: z.string() }).loose());
       if (!raw.ok) return fail("VALIDATION", raw.message);
       if (LATER_ACTIONS.has(raw.value.action)) {
@@ -141,6 +168,8 @@ export function makeTradingRoutes(
     /** GET /api/plans/:id: the stored summary and its exact items. Only the owner's own plans. */
     getPlan: (req: Request, id: string) =>
       guard.authed({}, async ({ deps, session }) => {
+        const limited = throttle(deps, session, "read");
+        if (limited !== null) return limited;
         const plan = await loadPlan(deps.db, session.userId, id);
         if (plan === null) return fail("NOT_FOUND", "No such plan.");
         const expired = plan.status === "created" && plan.expiresAt <= deps.clock.now();
@@ -150,10 +179,12 @@ export function makeTradingRoutes(
     /** POST /api/plans/:id/execute → 202 { executionId }. Runs the STORED items only; the body is ignored. */
     execute: (req: Request, id: string) =>
       guard.authed({}, async ({ deps, session }) => {
+        const limited = throttle(deps, session, "execute");
+        if (limited !== null) return limited;
         const plan = await loadPlan(deps.db, session.userId, id);
         if (plan === null) return fail("NOT_FOUND", "No such plan.");
         return withBroker(services, async (svc) => {
-          const r = await startExecution(svc, deps.db, plan);
+          const r = await startExecution(svc, deps.db, plan, completeAudit(deps, svc));
           const key = auditKey(deps.sessionSecret);
           const at = new Date(svc.clock.now());
           if (!r.ok) {
@@ -189,10 +220,14 @@ export function makeTradingRoutes(
     /** GET /api/executions/:id: status, progress, counts. */
     execution: (req: Request, id: string) =>
       guard.authed({}, async ({ deps, session }) => {
+        const limited = throttle(deps, session, "read");
+        if (limited !== null) return limited;
         const row = await ownedExecution(deps.db, session.userId, id);
         if (row === null) return fail("NOT_FOUND", "No such execution.");
         return withBroker(services, (svc) => {
           const live = svc.runner.status(id);
+          const stored = (row.summary ?? {}) as { skippedUpFront?: unknown };
+          const skippedUpFront = stored.skippedUpFront ?? [];
           if (live !== undefined) {
             return Promise.resolve(
               ok({
@@ -200,13 +235,29 @@ export function makeTradingRoutes(
                 planId: live.planId,
                 state: live.state,
                 progress: progressView(live.progress),
-                ...(live.summary === undefined ? {} : { summary: live.summary }),
+                skippedUpFront,
+                ...(live.summary === undefined
+                  ? {}
+                  : { outcome: outcomeOf(live.summary), summary: live.summary }),
               }),
             );
           }
-          // Not in this process any more (restart, or pruned): the database has the record.
+          // Not in this process (restart, or pruned): the database has the record. "running" with no live run here
+          // can't be true: report it as interrupted (items without a result may have been sent: check MT5).
+          const state = row.status === "running" ? "interrupted" : row.status;
+          const s = row.summary as Summary | null;
           return Promise.resolve(
-            ok({ executionId: id, planId: row.plan_id, state: row.status, summary: row.summary }),
+            ok({
+              executionId: id,
+              planId: row.plan_id,
+              state,
+              skippedUpFront,
+              ...(state === "complete" && s !== null && typeof s.total === "number"
+                ? { outcome: outcomeOf(s), progress: progressView(s) }
+                : {}),
+              ...(state === "interrupted" ? { outcome: "interrupted" } : {}),
+              summary: row.summary,
+            }),
           );
         });
       })(req),
@@ -217,40 +268,95 @@ export function makeTradingRoutes(
      */
     stream: (req: Request, id: string) =>
       guard.authed({}, async ({ deps, session }) => {
+        const limited = throttle(deps, session, "read");
+        if (limited !== null) return limited;
         const row = await ownedExecution(deps.db, session.userId, id);
         if (row === null) return fail("NOT_FOUND", "No such execution.");
         return withBroker(services, (svc) => {
           const lastRaw = req.headers.get("last-event-id") ?? new URL(req.url).searchParams.get("after");
-          const last = lastRaw !== null && /^\d{1,9}$/.test(lastRaw) ? Number(lastRaw) : -1;
           const known = svc.runner.status(id);
+          const asked = lastRaw !== null && /^\d{1,9}$/.test(lastRaw) ? Number(lastRaw) : -1;
+          if ((openStreams.get(session.idHash) ?? 0) >= MAX_STREAMS_PER_SESSION) {
+            return Promise.resolve(
+              fail("RATE_LIMITED", "Too many live views open. Close one and try again.", {
+                headers: { "Retry-After": "5" },
+              }),
+            );
+          }
           const encoder = new TextEncoder();
+          // Every exit path goes through `finish`, exactly once: a dropped client must never leave a timer firing
+          // into a cancelled stream (that throws in a timer callback and can take the process down, review H1).
+          let closed = false;
+          let beat: ReturnType<typeof setInterval> | undefined;
+          let lifetime: ReturnType<typeof setTimeout> | undefined;
+          let events: AsyncIterator<Sequenced> | undefined;
+          let finish: (controller?: ReadableStreamDefaultController<Uint8Array>) => void = () => undefined;
           const body = new ReadableStream<Uint8Array>({
-            async start(controller) {
-              const send = (text: string) => {
-                controller.enqueue(encoder.encode(text));
+            start(controller) {
+              openStreams.set(session.idHash, (openStreams.get(session.idHash) ?? 0) + 1);
+              finish = (c) => {
+                if (closed) return;
+                closed = true;
+                clearInterval(beat);
+                clearTimeout(lifetime);
+                const n = (openStreams.get(session.idHash) ?? 1) - 1;
+                if (n <= 0) openStreams.delete(session.idHash);
+                else openStreams.set(session.idHash, n);
+                void events?.return?.();
+                try {
+                  c?.close();
+                } catch {
+                  // already closed by the client
+                }
               };
-              const beat = setInterval(() => {
+              const send = (text: string) => {
+                if (closed) return;
+                try {
+                  controller.enqueue(encoder.encode(text));
+                } catch {
+                  finish();
+                }
+              };
+              req.signal.addEventListener("abort", () => {
+                finish();
+              });
+              beat = setInterval(() => {
                 send(": keep-alive\n\n");
               }, 15_000);
-              (beat as { unref?: () => void }).unref?.();
-              try {
-                if (known?.replayable !== true) {
-                  send(
-                    `event: error\ndata: ${JSON.stringify({
-                      code: "NOT_FOUND",
-                      message: "This run's live events aren't available. Load its status instead.",
-                    })}\n\n`,
-                  );
-                  return;
-                }
-                for await (const { seq, event } of svc.runner.events(id, last)) {
-                  if (req.signal.aborted) break;
-                  send(sseFrames(seq, event));
-                }
-              } finally {
-                clearInterval(beat);
-                controller.close();
+              // The phone reconnects with Last-Event-ID, so a capped lifetime loses nothing and bounds every stream.
+              lifetime = setTimeout(() => {
+                finish(controller);
+              }, MAX_STREAM_MS);
+              for (const t of [beat, lifetime]) (t as { unref?: () => void }).unref?.();
+
+              if (known?.replayable !== true) {
+                send(
+                  `event: error\ndata: ${JSON.stringify({
+                    code: "NOT_FOUND",
+                    message: "This run's live events aren't available. Load its status instead.",
+                  })}\n\n`,
+                );
+                finish(controller);
+                return;
               }
+              const it = svc.runner.events(id, asked)[Symbol.asyncIterator]();
+              events = it;
+              void (async () => {
+                try {
+                  for (;;) {
+                    const next = await it.next();
+                    if (next.done === true || closed) break;
+                    send(sseFrames(next.value.seq, next.value.event));
+                  }
+                } catch {
+                  // the runner never throws here; a bug must still close the stream
+                } finally {
+                  finish(controller);
+                }
+              })();
+            },
+            cancel() {
+              finish();
             },
           });
           return Promise.resolve(
@@ -269,6 +375,8 @@ export function makeTradingRoutes(
 
     /** POST /api/close-now: build, record and run the close plan in one call, on the urgent lane. */
     closeNow: guard.authed({}, async ({ req, deps, session }) => {
+      const limited = throttle(deps, session, "closeNow");
+      if (limited !== null) return limited;
       const body = await parseJson(req, closeNowBody);
       if (!body.ok) return fail("VALIDATION", body.message);
       return withBroker(services, async (svc) => {
@@ -279,6 +387,7 @@ export function makeTradingRoutes(
           session.userId,
           body.value,
           planAudit(deps, at, "close_now.requested", { cancelPending: body.value.cancelPending }),
+          completeAudit(deps, svc),
         );
         if (!r.ok) {
           if (r.code === "NOTHING_TO_CLOSE") return fail("PLAN_INVALID", r.message, { details: [] });
@@ -290,6 +399,7 @@ export function makeTradingRoutes(
           );
           return fail(r.code, r.message, r.code === "PRICE_MOVED" ? { details: r.details } : {});
         }
+        if ("joined" in r) return ok({ executionId: r.executionId, joined: true }, 202);
         await audit(
           deps.db,
           auditKey(deps.sessionSecret),
@@ -307,8 +417,10 @@ export function makeTradingRoutes(
 
     /** POST /api/executions/:id/retry-failed → a new PlanSummary of the failed items (preview it, then execute it). */
     retryFailed: (req: Request, id: string) =>
-      guard.authed({}, async ({ deps, session }) =>
-        withBroker(services, async (svc) => {
+      guard.authed({}, async ({ deps, session }) => {
+        const limited = throttle(deps, session, "plan");
+        if (limited !== null) return limited;
+        return withBroker(services, async (svc) => {
           const r = await retryFailed(
             svc,
             deps.db,
@@ -325,17 +437,25 @@ export function makeTradingRoutes(
             case "NOTHING_TO_RETRY":
               return fail("PLAN_INVALID", r.message, { details: [] });
           }
-        }),
-      )(req),
+        });
+      })(req),
 
     /** GET /api/history?cursor= : past executions, newest first. */
     history: guard.authed({}, async ({ req, deps, session }) => {
+      const limited = throttle(deps, session, "read");
+      if (limited !== null) return limited;
       const cursor = new URL(req.url).searchParams.get("cursor") ?? undefined;
+      if (cursor !== undefined && cursor.length > 100) return fail("VALIDATION", "cursor: too long");
       const page = await history(deps.db, session.userId, cursor === "" ? undefined : cursor);
       return page === null ? fail("VALIDATION", "cursor: not a cursor from this list") : ok(page);
     }),
   };
 }
+
+/** Live progress streams (security review H1). */
+export const MAX_STREAMS_PER_SESSION = 4;
+export const MAX_STREAM_MS = 10 * 60_000;
+const openStreams = new Map<string, number>();
 
 async function ownedExecution(
   db: Db,
@@ -369,4 +489,9 @@ function planAudit(
       },
       at,
     );
+}
+
+/** Writes a run's completion record into the audit chain (inside the summary's transaction). */
+function completeAudit(deps: AuthDeps, svc: TradingServices): RecordComplete {
+  return (t, entry) => audit(t, auditKey(deps.sessionSecret), entry, new Date(svc.clock.now()));
 }

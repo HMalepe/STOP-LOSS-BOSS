@@ -40,19 +40,21 @@ export function tradingModeGate(input: {
             message: `The app is in DEMO mode but the broker account is ${input.brokerTradeMode ?? "unknown"}. Refusing to trade.`,
           };
     case "live":
-      if (!input.liveEnabled) {
+      // Account type FIRST: close-now waives "live not enabled" (closing reduces risk), and that waiver must never be
+      // able to hide a wrong account (QA review, Phase 06).
+      if (input.brokerTradeMode !== "REAL") {
         return {
           ok: false,
-          code: "LIVE_NOT_ENABLED",
-          message: "Live trading isn't enabled for this account (needs re-auth to turn on).",
+          code: "ACCOUNT_MODE_MISMATCH",
+          message: `The app is in LIVE mode but the broker account is ${input.brokerTradeMode ?? "unknown"}. Refusing to trade.`,
         };
       }
-      return input.brokerTradeMode === "REAL"
+      return input.liveEnabled
         ? { ok: true }
         : {
             ok: false,
-            code: "ACCOUNT_MODE_MISMATCH",
-            message: `The app is in LIVE mode but the broker account is ${input.brokerTradeMode ?? "unknown"}. Refusing to trade.`,
+            code: "LIVE_NOT_ENABLED",
+            message: "Live trading isn't enabled for this account (needs re-auth to turn on).",
           };
   }
 }

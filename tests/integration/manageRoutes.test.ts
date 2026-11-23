@@ -7,7 +7,7 @@ import { makeTradingRoutes } from "@/server/http/tradingRoutes";
 import { setKillSwitch } from "@/server/killSwitch";
 import { HISTORY_PAGE } from "@/server/trading/manage";
 import type { TradingServices } from "@/server/trading/services";
-import { mockServices } from "../helpers/services";
+import { asAccount, mockServices } from "../helpers/services";
 import { get, post, signedIn, type SignedIn } from "../helpers/session";
 
 let s: SignedIn;
@@ -71,7 +71,7 @@ describe("POST /api/close-now", () => {
     const actions = (await s.db.query<{ action: string }>("select action from audit_log order by id")).map(
       (r) => r.action,
     );
-    expect(actions.slice(-2)).toEqual(["close_now.requested", "execution.started"]);
+    expect(actions.slice(-3)).toEqual(["close_now.requested", "execution.started", "execution.complete"]);
   });
 
   it("R4.2: works with the kill switch on", async () => {
@@ -84,7 +84,7 @@ describe("POST /api/close-now", () => {
 
   it("closing reduces risk: 'live not enabled' doesn't block it; the wrong account type does", async () => {
     const live = makeTradingRoutes(s.guard, () =>
-      Promise.resolve({ ...svc, mode: "live", accountRef: "acc-1" }),
+      Promise.resolve({ ...svc, broker: asAccount(broker, "REAL"), mode: "live", accountRef: "acc-1" }),
     );
     const ok = await closeAll(undefined, live);
     expect(ok.status).toBe(202);
@@ -98,8 +98,11 @@ describe("POST /api/close-now", () => {
       tp: null,
       magic: 0,
     });
-    await s.db.query("insert into accounts (metaapi_account_id, live_enabled) values ('acc-1', true)");
-    const wrong = await closeAll(undefined, live);
+    // QA review MUST-1: live NOT enabled + a DEMO account must still be refused (the waiver can't hide a mismatch).
+    const demoAcct = makeTradingRoutes(s.guard, () =>
+      Promise.resolve({ ...svc, broker: asAccount(broker, "DEMO"), mode: "live", accountRef: "acc-1" }),
+    );
+    const wrong = await closeAll(undefined, demoAcct);
     expect([wrong.status, (await errorOf(wrong)).code]).toEqual([403, "ACCOUNT_MODE_MISMATCH"]);
     expect(await goldLeft()).toBe(1);
   });
@@ -186,7 +189,7 @@ describe("POST /api/executions/:id/retry-failed", () => {
       breakdown: { buys: 1, sells: 0 },
     });
     expect(summary.warnings).toEqual([
-      "Retrying 1 that failed.",
+      "Retrying 1 that failed or weren't sent.",
       "1 ended unknown and are NOT retried: check them in MT5.",
     ]);
     const newId = String(summary.id);
@@ -207,8 +210,12 @@ describe("POST /api/executions/:id/retry-failed", () => {
       executionId,
     ]);
     expect((await errorOf(await retry(executionId))).message).toMatch(/^Nothing failed\. 1 ended unknown/);
+    // "running" in the DB but not running anywhere (restart): not STILL_RUNNING forever; it becomes interrupted.
     await s.db.query("update executions set status = 'running' where id = $1", [executionId]);
-    expect((await retry(executionId)).status).toBe(400);
+    expect((await retry(executionId)).status).toBe(422);
+    expect(await s.db.query("select status from executions where id = $1", [executionId])).toEqual([
+      { status: "interrupted" },
+    ]);
     expect((await retry("00000000-0000-4000-8000-000000000000")).status).toBe(404);
     expect((await retry("nope")).status).toBe(404);
   });

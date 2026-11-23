@@ -1,5 +1,6 @@
 /** TradingServices on a MockBroker (no real latency) with the real runner and the DB-backed execution store. */
 import type { ManualClock } from "@/domain/clock";
+import type { BrokerProvider } from "@/broker/BrokerProvider";
 import type { MockBroker } from "@/broker/MockBroker";
 import type { Db } from "@/server/db/sql";
 import { buildRunner, demoMockBroker, type TradingServices } from "@/server/trading/services";
@@ -20,7 +21,20 @@ export function mockServices(
     clock,
     runner: buildRunner(b, db, clock),
     accountRef: null,
+    maxPerBatch: 1_000,
     ...over,
   };
   return { svc, broker };
+}
+
+/** The mock, but reporting itself as a MetaApi connection to an account of the given type (for live/demo gate tests). */
+export function asAccount(b: MockBroker, tradeMode: "DEMO" | "CONTEST" | "REAL"): BrokerProvider {
+  return new Proxy(b, {
+    get(target, prop, recv) {
+      if (prop === "name") return "metaapi";
+      if (prop === "getAccount") return async () => ({ ...(await target.getAccount()), tradeMode });
+      const v: unknown = Reflect.get(target, prop, recv);
+      return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
 }

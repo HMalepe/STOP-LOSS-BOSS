@@ -287,6 +287,38 @@ describe("Phase 04 SRE review: streams, memory, urgency", () => {
     expect(broker.calls.length).toBeLessThan(32);
   });
 
+  it("abortAll (kill switch): stops normal runs, spares the urgent one when asked; activeUrgent finds it", async () => {
+    const { s, runner, items } = setup();
+    expect(runner.activeUrgent()).toBeUndefined();
+    await runner.start("bulk", items(30));
+    await runner.start("panic", items(30), { urgent: true });
+    expect(runner.activeUrgent()).toBe("ex2");
+    await runner.start("bulk2", items(30));
+    expect(runner.abortAll({ keepUrgent: true })).toEqual(["ex3"]);
+    await s.run(Promise.all([drain(runner.events("ex2")), drain(runner.events("ex3"))]));
+    expect(runner.status("ex3")?.summary?.aborted).toBe(true);
+    expect(runner.status("ex2")?.summary).toMatchObject({ aborted: false, done: 30 });
+    expect(runner.activeUrgent()).toBeUndefined();
+    expect(runner.abortAll()).toEqual([]);
+  });
+
+  it("a second close-now never cancels the first (both are panic closes)", async () => {
+    const { s, runner, items } = setup();
+    await runner.start("panicA", items(20), { urgent: true });
+    await runner.start("panicB", items(20), { urgent: true });
+    await s.run(Promise.all([drain(runner.events("ex1")), drain(runner.events("ex2"))]));
+    expect(runner.status("ex1")?.summary).toMatchObject({ aborted: false, done: 20 });
+    expect(runner.status("ex2")?.summary).toMatchObject({ aborted: false, done: 20 });
+  });
+
+  it("abortAll without keepUrgent stops everything running", async () => {
+    const { s, runner, items } = setup();
+    await runner.start("panic", items(30), { urgent: true });
+    expect(runner.abortAll()).toEqual(["ex1"]);
+    await s.run(drain(runner.events("ex1")));
+    expect(runner.status("ex1")?.summary?.aborted).toBe(true);
+  });
+
   it("every log line carries its execution id", async () => {
     const s = new VirtualScheduler(0);
     const broker = new MockBroker({

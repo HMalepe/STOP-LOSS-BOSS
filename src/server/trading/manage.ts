@@ -13,7 +13,7 @@ import { buildPlan, type PlanDraft } from "@/domain/plan";
 import { roundToTick } from "@/domain/price";
 import type { PlanItem, PositionFilter, Quote, SymbolSpec } from "@/domain/types";
 import type { Db } from "../db/sql";
-import { gates, persistResults, type ExecuteRefusal } from "./executions";
+import { gates, persistResults, type ExecuteRefusal, type RecordComplete } from "./executions";
 import { loadPlan, storePlan, type PlanSummary } from "./plans";
 import type { TradingServices } from "./services";
 
@@ -41,6 +41,7 @@ type Record_ = (tx: Db, summary: PlanSummary) => Promise<unknown>;
 
 export type CloseNowResult =
   | { readonly ok: true; readonly executionId: string; readonly summary: PlanSummary }
+  | { readonly ok: true; readonly executionId: string; readonly joined: true }
   | ({ readonly ok: false } & (
       ExecuteRefusal | { readonly code: "NOTHING_TO_CLOSE"; readonly message: string }
     ));
@@ -60,9 +61,11 @@ export async function closeNow(
   userId: string,
   body: CloseNowBody,
   record: Record_,
+  complete: RecordComplete,
 ): Promise<CloseNowResult> {
+  // The gates waive the kill switch and "live not enabled" for closes, never a wrong account type.
   const refused = await gates(svc, db, "close");
-  if (refused !== null && refused.code !== "LIVE_NOT_ENABLED") return { ok: false, ...refused };
+  if (refused !== null) return { ok: false, ...refused };
 
   const f: PositionFilter = {
     symbol: body.filter.symbol,
@@ -76,6 +79,14 @@ export async function closeNow(
     optional<Quote>(svc.broker.getQuote(f.symbol)),
     optional<SymbolSpec>(svc.specs.get(f.symbol)),
   ]);
+  const key = filterKey(f, body.cancelPending);
+  // A double tap joins the close already running for the same filter instead of racing it (security review L3).
+  for (const [executionId, k] of urgentFilters) {
+    if (k !== key) continue;
+    if (svc.runner.status(executionId)?.state === "running") return { ok: true, executionId, joined: true };
+    urgentFilters.delete(executionId);
+  }
+
   const req = { action: "close" as const, filter: f, cancelPending: body.cancelPending };
   const built = buildPlan(req, { positions, orders, quote, spec });
   if (!built.ok) return { ok: false, code: "NOTHING_TO_CLOSE", message: built.error.message };
@@ -84,9 +95,16 @@ export async function closeNow(
   const started = await svc.runner.start(summary.id, built.plan.items, { urgent: true });
   // A fresh plan id can't already be claimed; this only guards against a broken store.
   if (!started.ok) return { ok: false, code: "INTERNAL", message: "Couldn't start the close. Try again." };
-  void persistResults(svc.runner, db, started.executionId);
+  urgentFilters.set(started.executionId, key);
+  if (urgentFilters.size > 100) urgentFilters.delete(urgentFilters.keys().next().value ?? "");
+  void persistResults(svc.runner, db, started.executionId, complete);
   return { ok: true, executionId: started.executionId, summary };
 }
+
+/** Running close-nows by filter (bounded). */
+const urgentFilters = new Map<string, string>();
+const filterKey = (f: PositionFilter, cancelPending: boolean) =>
+  JSON.stringify([f.symbol, f.side, f.magic ?? null, f.inProfitOnly ?? false, cancelPending]);
 
 export type RetryResult =
   | { readonly ok: true; readonly summary: PlanSummary }
@@ -114,17 +132,33 @@ export async function retryFailed(
   );
   if (exec === undefined) return { ok: false, code: "NOT_FOUND", message: "No such execution." };
   if (exec.status === "running") {
-    return { ok: false, code: "STILL_RUNNING", message: "Still running. Retry once it finishes." };
+    if (svc.runner.status(executionId)?.state === "running") {
+      return { ok: false, code: "STILL_RUNNING", message: "Still running. Retry once it finishes." };
+    }
+    // Not running anywhere: cut off (restart, or its results couldn't be saved). Say so, don't block forever.
+    await db.query("update executions set status = 'interrupted', finished_at = now() where id = $1", [
+      executionId,
+    ]);
   }
   const original = await loadPlan(db, userId, exec.plan_id);
   if (original === null) return { ok: false, code: "NOT_FOUND", message: "No such execution." };
 
-  const rows = await db.query<{ op: string; target_id: string; state: string }>(
-    "select op, target_id, state from execution_items where execution_id = $1",
+  const rows = await db.query<{ op: string; target_id: string; state: string; message: string }>(
+    "select op, target_id, state, coalesce(message, '') as message from execution_items where execution_id = $1",
     [executionId],
   );
-  const failed = new Set(rows.filter((r) => r.state === "failed").map((r) => `${r.op}|${r.target_id}`));
-  const unknown = rows.filter((r) => r.state === "unknown").length;
+  // Retryable: failed, or never sent because the run was aborted (close-now, kill switch). An abort-skipped modify is a
+  // position still without the level the owner asked for (QA review): it must not vanish as "nothing failed".
+  const retryable = rows.filter(
+    (r) =>
+      r.state === "failed" || (r.state === "skipped" && r.message.startsWith("aborted before it was sent")),
+  );
+  const failed = new Set(retryable.map((r) => `${r.op}|${r.target_id}`));
+  const withRow = new Set(rows.map((r) => `${r.op}|${r.target_id}`));
+  // No result row at all = never reported: maybe sent (interrupted run). Unknown, never retried.
+  const missing = original.items.filter((i) => !withRow.has(`${i.op}|${targetOfItem(i)}`)).length;
+  const unknown =
+    rows.filter((r) => r.state === "unknown").length + (exec.status === "complete" ? 0 : missing);
   // Ids are unique within a plan (R0.3), so op + target picks out exactly the item that failed.
   const items = original.items.filter((i) => failed.has(`${i.op}|${targetOfItem(i)}`));
   if (items.length === 0) {
@@ -157,7 +191,7 @@ export async function retryFailed(
       sells: sides.filter((x) => x === "SELL").length,
     },
     warnings: [
-      `Retrying ${String(items.length)} that failed.`,
+      `Retrying ${String(items.length)} that failed or weren't sent.`,
       ...(unknown > 0 ? [`${String(unknown)} ended unknown and are NOT retried: check them in MT5.`] : []),
     ],
   };

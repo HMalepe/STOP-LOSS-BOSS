@@ -46,10 +46,15 @@ export interface JobRunner {
   status(executionId: string): ExecutionStatus | undefined;
   /** Stop sending new items. In-flight ones finish. */
   abort(executionId: string): boolean;
+  /** Abort every running execution; `keepUrgent` spares close-now runs (the kill switch must never stop a panic close). */
+  abortAll(opts?: { readonly keepUrgent?: boolean }): string[];
+  /** The running urgent (close-now) execution, if any. */
+  activeUrgent(): string | undefined;
 }
 
 interface Execution {
   readonly planId: string;
+  readonly urgent: boolean;
   readonly history: Sequenced[];
   readonly subscribers: Set<Channel<Sequenced>>;
   readonly abort: AbortController;
@@ -83,11 +88,13 @@ export class InProcessRunner implements JobRunner {
     if (!claim.created) return { ok: false, code: "PLAN_ALREADY_EXECUTED", executionId: claim.executionId };
 
     if (opts.urgent === true) {
-      // When the owner hits close-all, nothing else should be spending their credits.
-      for (const [id, other] of this.#executions) if (!other.done) this.abort(id);
+      // When the owner hits close-all, nothing else should be spending their credits. Another close-all (a different
+      // symbol, say) is never cancelled by this one: both are panic closes.
+      this.abortAll({ keepUrgent: true });
     }
     const exec: Execution = {
       planId,
+      urgent: opts.urgent === true,
       history: [],
       subscribers: new Set(),
       abort: new AbortController(),
@@ -182,6 +189,21 @@ export class InProcessRunner implements JobRunner {
       exec.history.length = 0;
       exec.replayable = false;
     });
+  }
+
+  abortAll(opts: { readonly keepUrgent?: boolean } = {}): string[] {
+    const aborted: string[] = [];
+    for (const [id, exec] of this.#executions) {
+      if (exec.done || exec.abort.signal.aborted || (opts.keepUrgent === true && exec.urgent)) continue;
+      exec.abort.abort();
+      aborted.push(id);
+    }
+    return aborted;
+  }
+
+  activeUrgent(): string | undefined {
+    for (const [id, exec] of this.#executions) if (exec.urgent && !exec.done) return id;
+    return undefined;
   }
 
   /** Bounded status records: drop the oldest finished ones. */

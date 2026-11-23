@@ -18,6 +18,7 @@ SESSION_SECRET=           # 32+ random bytes
 APP_ORIGIN=https://your-app.vercel.app
 TRUSTED_IP_HEADER=x-forwarded-for   # the ONE header your host's proxy sets: x-forwarded-for | x-real-ip | cf-connecting-ip | fly-client-ip | true-client-ip
 MAX_ORDERS_PER_ACTION=100
+MAX_POSITIONS_PER_BATCH=1000   # most positions one modify/close-at may touch (close-now exempt)
 MAX_TOTAL_LOTS=5
 MAX_RISK_PCT_PER_ACTION=2   # % of equity at risk to SL, per action (R9.2)
 SPREAD_GUARD_K=3            # adaptive spread guard multiplier (R9.4b)

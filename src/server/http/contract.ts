@@ -55,7 +55,11 @@ export const executeAccepted = z.strictObject({
   skipped: z.array(skipped),
 });
 
-export const closeNowAccepted = z.strictObject({ executionId: z.uuid(), plan: planSummary });
+export const closeNowAccepted = z.union([
+  z.strictObject({ executionId: z.uuid(), plan: planSummary }),
+  /** A double tap: the close already running for the same filter. */
+  z.strictObject({ executionId: z.uuid(), joined: z.literal(true) }),
+]);
 
 export const progress = z.strictObject({
   total: z.number().int(),
@@ -70,6 +74,9 @@ export const executionStatus = z.object({
   executionId: z.uuid(),
   planId: z.string(),
   state: z.enum(["running", "complete", "interrupted"]),
+  /** Never read "complete" as "all done": all_done | partial | aborted | nothing | interrupted. */
+  outcome: z.enum(["all_done", "partial", "aborted", "nothing", "interrupted"]).optional(),
+  skippedUpFront: z.array(skipped),
   progress: progress.optional(),
   summary: z.unknown().optional(),
 });

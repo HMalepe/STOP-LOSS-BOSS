@@ -68,3 +68,25 @@ Residual risk, accepted: an attacker WITH the password can spend the owner's sec
 for up to an hour (sessions last 7 days, so the owner is normally already signed in; rotate the password with
 `seed:owner --replace`). A distributed password-guessing botnet is throttled per network and by HashGate, not per account,
 on purpose.
+
+## Phase 06 review (API routes): findings and fixes
+Security engineer + QA lead. Regression tests: `tests/integration/phase06-review.test.ts`.
+
+| Sev | Finding | Fix |
+|---|---|---|
+| HIGH | SSE: a dropped client left a heartbeat firing into a cancelled stream (uncaught throw in a timer can kill the process mid-batch) | Single idempotent `finish` on cancel / abort / end; guarded writes; 10 min lifetime (resume via Last-Event-ID); 4 streams per session |
+| HIGH | No cap on batch size | `MAX_POSITIONS_PER_BATCH` (default 1,000) on previews; close-now exempt (it's how you get flat) |
+| HIGH | No rate limit on trading routes (a stolen session could drain MetaApi reads close-now needs, flood tables) | Per-session budgets (`sessionLimiter.ts`), close-now has its own; expired un-run plans pruned after a day |
+| MUST (QA) | Close-now in live with "live not enabled" skipped the account-TYPE check | Live gate checks the account type first; the close waiver can only waive the opt-in |
+| MUST (QA) | Items aborted by close-now / kill switch vanished from retry ("nothing failed") | Abort-skipped items are retryable; status carries `outcome` (all_done / partial / aborted / interrupted) |
+| MUST (QA) / MED | A failed save or a restart left runs "running" forever, blocking retry | Failed save → `interrupted`; boot recovery; status reports interrupted; missing results counted unknown |
+| MUST (QA) | Retrying a close-now's failures lost the close exemption and urgent lane | Close plans keep both, wherever they come from |
+| MED | Expiry not re-checked at the claim | Claim requires `expires_at > now` atomically |
+| MED | Kill switch ON didn't stop a running batch | ON aborts every running batch except close-now |
+| MED | Item outcomes not in the audit chain | `execution.complete` row with counts, outcome and a hash of every item result |
+| SHOULD | Drift guard used a cached spec | Spec re-read at execute |
+| LOW | Close-now double tap raced itself; a second panic close cancelled the first | Same filter joins the running close; urgent runs never abort each other |
+
+**Open, owner's call:** fresh TOTP before EXECUTE in live mode (a 7-day session can trade with no second factor; close-now
+would stay exempt). Not done: it costs a code entry per live batch.
+**Carry-over:** close items aren't drift-checked against volume changes (MT5 tickets aren't reused; low risk).
