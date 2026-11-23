@@ -17,6 +17,7 @@ const demoBase = {
   APP_ORIGIN: "http://localhost:3000",
   DATABASE_URL: DB,
   TRUSTED_IP_HEADER: "x-forwarded-for",
+  NEXT_MANUAL_SIG_HANDLE: "true",
 };
 
 function problemsOf(source: Record<string, string | undefined>): readonly string[] {
@@ -78,9 +79,17 @@ describe("loadEnv per mode", () => {
       "APP_ORIGIN",
       "DATABASE_URL",
       "TRUSTED_IP_HEADER",
+      "NEXT_MANUAL_SIG_HANDLE",
     ]) {
       expect(problems).toContain(`${key}: required when TRADING_MODE=demo`);
     }
+  });
+
+  it("graceful shutdown: signal handling must be ours outside mock; drain window is bounded", () => {
+    expect(problemsOf({ ...demoBase, NEXT_MANUAL_SIG_HANDLE: "1" })[0]).toMatch(/^NEXT_MANUAL_SIG_HANDLE:/);
+    expect(loadEnv(demoBase).SHUTDOWN_DRAIN_MS).toBe(15_000);
+    expect(problemsOf({ ...demoBase, SHUTDOWN_DRAIN_MS: "500" })[0]).toMatch(/^SHUTDOWN_DRAIN_MS:/);
+    expect(loadEnv({ SESSION_SECRET: SECRET }).NEXT_MANUAL_SIG_HANDLE).toBeUndefined();
   });
 
   it("APP_ORIGIN is normalised to a bare origin (a trailing slash or path can't break the CSRF check)", () => {

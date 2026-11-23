@@ -7,7 +7,7 @@
  */
 import type { AccountTradeMode, BrokerProvider } from "@/broker/BrokerProvider";
 import { MockBroker } from "@/broker/MockBroker";
-import { sharedMetaApiBroker } from "@/broker/metaapi";
+import { closeSharedMetaApiBroker, sharedMetaApiBroker } from "@/broker/metaapi";
 import { openMetaApiConnection } from "@/broker/metaapi/sdk";
 import type { Clock } from "@/domain/clock";
 import { systemClock } from "../clock";
@@ -16,9 +16,10 @@ import { CreditLimiter } from "@/execution/rateLimiter";
 import { InProcessRunner, type JobRunner } from "@/execution/jobRunner";
 import { makeRevalidator } from "@/execution/revalidate";
 import { realScheduler, type Scheduler } from "@/execution/scheduler";
-import { getDb } from "../context";
+import { getDb, startedDb } from "../context";
 import type { Db } from "../db/sql";
-import { DbExecutionStore, recoverInterrupted } from "./executions";
+import { DbExecutionStore, markInterrupted, recoverInterrupted } from "./executions";
+import { shutdown, TaskTracker, type ShutdownOptions, type ShutdownReport } from "../shutdown";
 import { SpecCache } from "./specCache";
 
 export interface TradingServices {
@@ -28,6 +29,8 @@ export interface TradingServices {
   readonly envHalted: boolean;
   readonly clock: Clock;
   readonly runner: JobRunner;
+  /** Result writes still in progress; graceful shutdown waits for them before closing the database. */
+  readonly background: TaskTracker;
   /** Most positions one preview may touch (MAX_POSITIONS_PER_BATCH). Close-now is exempt. */
   readonly maxPerBatch: number;
   /** The MetaApi account id (the accounts row whose live_enabled counts). null in mock mode. */
@@ -197,6 +200,7 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
     envHalted: env.TRADING_HALTED,
     clock,
     runner,
+    background: new TaskTracker(),
     maxPerBatch: env.MAX_POSITIONS_PER_BATCH,
     accountRef: env.TRADING_MODE === "mock" ? null : (env.METAAPI_ACCOUNT_ID ?? null),
   };
@@ -209,6 +213,33 @@ export function getTradingServices(): Promise<TradingServices> {
     throw e;
   });
   return shared.services;
+}
+
+/**
+ * SIGTERM: drain and close what's open. Never starts services or opens a database just to shut them down.
+ * The shared MetaApi connection is closed through closeSharedMetaApiBroker (it also stops the watchdog).
+ */
+export async function shutdownTradingServices(
+  opts: Omit<ShutdownOptions, "sleep"> = {},
+): Promise<ShutdownReport> {
+  const svc = await shared.services?.catch(() => undefined);
+  const db = await startedDb()?.catch(() => undefined);
+  const sleep = (ms: number) => realScheduler.sleep(ms);
+  if (svc === undefined || db === undefined) {
+    await closeSharedMetaApiBroker();
+    if (db !== undefined) await db.close().catch(() => undefined);
+    return shutdown(undefined, { sleep });
+  }
+  return shutdown(
+    {
+      runner: svc.runner,
+      background: svc.background,
+      broker: svc.broker.name === "metaapi" ? { close: closeSharedMetaApiBroker } : svc.broker,
+      db,
+      markInterrupted,
+    },
+    { ...opts, sleep },
+  );
 }
 
 /** The services if they've already started; never connects a broker just to ask. */

@@ -8,7 +8,7 @@
  * - `urgent` (close-now): aborts every other running execution and takes the limiter's fast lane.
  */
 import { randomUUID } from "node:crypto";
-import { Channel, ignore } from "./channel";
+import { Channel, Deferred, ignore } from "./channel";
 import { execute, type ExecuteDeps } from "./executor";
 import type { ExecutionStore } from "./idempotency";
 import type { ExecEvent, ExecItem, Progress, Summary } from "./types";
@@ -16,7 +16,9 @@ import type { ExecEvent, ExecItem, Progress, Summary } from "./types";
 export type StartResult =
   | { readonly ok: true; readonly executionId: string }
   /** 04-API-SPEC: PLAN_ALREADY_EXECUTED. The existing execution id is returned so the caller can follow it. */
-  | { readonly ok: false; readonly code: "PLAN_ALREADY_EXECUTED"; readonly executionId: string };
+  | { readonly ok: false; readonly code: "PLAN_ALREADY_EXECUTED"; readonly executionId: string }
+  /** Graceful shutdown in progress: nothing was claimed, so the plan can run on the next instance. */
+  | { readonly ok: false; readonly code: "SHUTTING_DOWN" };
 
 export interface StartOptions {
   /** Close-now: abort other running executions and jump the rate-limit queue. */
@@ -50,6 +52,12 @@ export interface JobRunner {
   abortAll(opts?: { readonly keepUrgent?: boolean }): string[];
   /** The running urgent (close-now) execution, if any. */
   activeUrgent(): string | undefined;
+  /** Shutdown: refuse new executions from now on. Running ones are untouched. */
+  stopAccepting(): void;
+  /** Resolves when no execution is running. */
+  idle(): Promise<void>;
+  /** Ids of executions still running. */
+  running(): string[];
 }
 
 interface Execution {
@@ -58,6 +66,7 @@ interface Execution {
   readonly history: Sequenced[];
   readonly subscribers: Set<Channel<Sequenced>>;
   readonly abort: AbortController;
+  readonly finished: Deferred;
   progress: Progress;
   summary?: Summary;
   done: boolean;
@@ -78,12 +87,14 @@ export interface InProcessRunnerDeps extends Omit<ExecuteDeps, "signal" | "prior
 export class InProcessRunner implements JobRunner {
   readonly #deps: InProcessRunnerDeps;
   readonly #executions = new Map<string, Execution>();
+  #accepting = true;
 
   constructor(deps: InProcessRunnerDeps) {
     this.#deps = deps;
   }
 
   async start(planId: string, items: readonly ExecItem[], opts: StartOptions = {}): Promise<StartResult> {
+    if (!this.#accepting) return { ok: false, code: "SHUTTING_DOWN" };
     const claim = await this.#deps.store.claim(planId, (this.#deps.newId ?? randomUUID)(), items);
     if (!claim.created) return { ok: false, code: "PLAN_ALREADY_EXECUTED", executionId: claim.executionId };
 
@@ -98,6 +109,7 @@ export class InProcessRunner implements JobRunner {
       history: [],
       subscribers: new Set(),
       abort: new AbortController(),
+      finished: new Deferred(),
       progress: { total: items.length, finished: 0, done: 0, failed: 0, unknown: 0, skipped: 0 },
       done: false,
       replayable: true,
@@ -187,6 +199,7 @@ export class InProcessRunner implements JobRunner {
 
   #finish(exec: Execution): void {
     exec.done = true;
+    exec.finished.resolve();
     for (const ch of [...exec.subscribers]) ch.close();
     exec.subscribers.clear();
     void this.#deps.scheduler.sleep(this.#deps.retainMs ?? 3_600_000).then(() => {
@@ -208,6 +221,23 @@ export class InProcessRunner implements JobRunner {
   activeUrgent(): string | undefined {
     for (const [id, exec] of this.#executions) if (exec.urgent && !exec.done) return id;
     return undefined;
+  }
+
+  stopAccepting(): void {
+    this.#accepting = false;
+  }
+
+  async idle(): Promise<void> {
+    // Loop: an execution that started while we waited (before stopAccepting) is waited for too.
+    for (;;) {
+      const open = [...this.#executions.values()].filter((e) => !e.done);
+      if (open.length === 0) return;
+      await Promise.all(open.map((e) => e.finished.promise));
+    }
+  }
+
+  running(): string[] {
+    return [...this.#executions].flatMap(([id, e]) => (e.done ? [] : [id]));
   }
 
   /** Bounded status records: drop the oldest finished ones. */

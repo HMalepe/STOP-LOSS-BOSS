@@ -30,6 +30,11 @@ export function getDb(): Promise<Db> {
   return db;
 }
 
+/** The database if it's already open; never opens one (shutdown must not connect just to close). */
+export function startedDb(): Promise<Db> | undefined {
+  return db;
+}
+
 export async function getAuthDeps(): Promise<AuthDeps> {
   return { db: await getDb(), clock: systemClock, sessionSecret: getEnv().SESSION_SECRET };
 }

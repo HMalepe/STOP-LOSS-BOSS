@@ -44,6 +44,7 @@
                   "LIVE_NOT_ENABLED",
                   "ACCOUNT_MODE_MISMATCH",
                   "BROKER_UNAVAILABLE",
+                  "SHUTTING_DOWN",
                   "NOT_FOUND",
                   "INTERNAL"
                 ]
@@ -1411,7 +1412,7 @@
             }
           },
           "503": {
-            "description": "BROKER_UNAVAILABLE",
+            "description": "BROKER_UNAVAILABLE | SHUTTING_DOWN",
             "content": {
               "application/json": {
                 "schema": {
@@ -2115,7 +2116,7 @@
             }
           },
           "503": {
-            "description": "BROKER_UNAVAILABLE",
+            "description": "BROKER_UNAVAILABLE | SHUTTING_DOWN",
             "content": {
               "application/json": {
                 "schema": {

@@ -140,6 +140,7 @@ export async function recoverInterrupted(
 export type ExecuteRefusal =
   | { readonly code: "PLAN_ALREADY_EXECUTED"; readonly message: string; readonly executionId: string | null }
   | { readonly code: "PLAN_EXPIRED" | "PRICE_STALE" | "INTERNAL"; readonly message: string }
+  | { readonly code: "SHUTTING_DOWN"; readonly message: string }
   | { readonly code: "TRADING_HALTED"; readonly message: string }
   | { readonly code: "LIVE_NOT_ENABLED" | "ACCOUNT_MODE_MISMATCH"; readonly message: string }
   | { readonly code: "PRICE_MOVED"; readonly message: string; readonly details: readonly Skipped[] };
@@ -272,6 +273,13 @@ export async function driftGuard(
   return { ok: true, run, skipped };
 }
 
+/** Nothing was claimed: the same plan can be executed again in a few seconds, on the new instance. */
+export const shuttingDown = {
+  ok: false,
+  code: "SHUTTING_DOWN",
+  message: "The server is restarting. Nothing was sent. Try again in a few seconds.",
+} as const;
+
 /** Writes the audit row for a finished run (same transaction as its summary). */
 export type RecordComplete = (tx: Db, entry: AuditEntry) => Promise<unknown>;
 
@@ -320,9 +328,9 @@ export async function startExecution(
     }
     throw e;
   }
-  if (!started.ok) return already();
+  if (!started.ok) return started.code === "SHUTTING_DOWN" ? shuttingDown : already();
   await noteSkipped(db, started.executionId, drift.skipped);
-  void persistResults(svc.runner, db, started.executionId, record);
+  svc.background.track(persistResults(svc.runner, db, started.executionId, record));
   return { ok: true, executionId: started.executionId, skipped: drift.skipped, count: drift.run.length };
 }
 

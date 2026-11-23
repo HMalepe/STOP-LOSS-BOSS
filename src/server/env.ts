@@ -64,6 +64,12 @@ const schema = z
     SPREAD_GUARD_K: z.coerce.number().min(1.5).max(20).default(3),
     SPREAD_WINDOW_SEC: int(30, 3600, 300),
 
+    // Graceful shutdown. Next.js exits on SIGTERM at once (process.exit(143), next/dist/server/lib/start-server.js)
+    // unless this is set, so our drain would never run. Required outside mock.
+    NEXT_MANUAL_SIG_HANDLE: z.enum(["true"]).optional(),
+    // How long running executions get to finish on SIGTERM. The host's kill timeout must exceed it (docs/08).
+    SHUTDOWN_DRAIN_MS: int(1_000, 120_000, 15_000),
+
     // Batch identity (R9.1): prefix × 10^9 + batchSeq must stay below 2^53.
     APP_MAGIC_PREFIX: int(1, 9_007_198, 7731),
   })
@@ -77,6 +83,7 @@ const schema = z
       "APP_ORIGIN",
       "DATABASE_URL",
       "TRUSTED_IP_HEADER",
+      "NEXT_MANUAL_SIG_HANDLE",
     ] as const;
     for (const key of required) {
       if (env[key] === undefined) {

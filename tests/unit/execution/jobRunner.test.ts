@@ -85,7 +85,7 @@ describe("idempotent execute (non-negotiable 7, 06-TESTING #4)", () => {
       runner.start("p", plan),
     ]);
     expect(results.filter((r) => r.ok)).toHaveLength(1);
-    expect(new Set(results.map((r) => r.executionId)).size).toBe(1);
+    expect(new Set(results.map((r) => ("executionId" in r ? r.executionId : null))).size).toBe(1);
     await s.run(drain(runner.events("ex1")));
     expect(broker.calls).toHaveLength(3);
   });
@@ -156,6 +156,7 @@ describe("events and status", () => {
       store: new InMemoryExecutionStore(),
     });
     const res = await r.start("x", []);
+    if (!res.ok) throw new Error("expected a start");
     expect(res.executionId).toMatch(/^[0-9a-f-]{36}$/);
   });
 });
@@ -396,5 +397,47 @@ describe("restart recovery wiring", () => {
     await runner.start("p", [{ op: "close", positionId: id, side: "BUY", volume: 0.1 }]);
     await s.run(drain(runner.events("exR")));
     expect(log).toEqual(["claim p 1", "sending exR 0 (calls so far 0)"]);
+  });
+});
+
+describe("graceful shutdown hooks", () => {
+  it("stopAccepting: start refuses with SHUTTING_DOWN before claiming (the plan stays executable elsewhere)", async () => {
+    const { s, broker, items } = setup();
+    const claims: string[] = [];
+    const runner = new InProcessRunner({
+      broker,
+      limiter: new CreditLimiter({ capacity: 5000, windowMs: 10_000, maxInFlight: 8, scheduler: s }),
+      scheduler: s,
+      concurrency: 1,
+      random: () => 0.5,
+      store: {
+        claim: (planId, id) => {
+          claims.push(planId);
+          return Promise.resolve({ executionId: id, created: true });
+        },
+      },
+    });
+    runner.stopAccepting();
+    expect(await runner.start("p", items(1))).toEqual({ ok: false, code: "SHUTTING_DOWN" });
+    expect(claims).toEqual([]);
+    expect(broker.calls).toHaveLength(0);
+  });
+
+  it("idle resolves once every running execution has completed (immediately when none)", async () => {
+    const { s, runner, items } = setup();
+    await runner.idle();
+    await runner.start("a", items(3));
+    await runner.start("b", items(2));
+    expect(runner.running()).toEqual(["ex1", "ex2"]);
+    let idle = false;
+    void runner.idle().then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+    await s.run(Promise.all([drain(runner.events("ex1")), drain(runner.events("ex2"))]));
+    await Promise.resolve();
+    expect(idle).toBe(true);
+    expect(runner.running()).toEqual([]);
   });
 });

@@ -252,6 +252,7 @@ export const OPERATIONS: readonly Op[] = [
       "PRICE_MOVED",
       "PRICE_STALE",
       "BROKER_UNAVAILABLE",
+      "SHUTTING_DOWN",
     ],
   },
   {
@@ -281,7 +282,14 @@ export const OPERATIONS: readonly Op[] = [
     summary: "Close everything matching, now (urgent lane)",
     body: closeNowBody,
     ok: { status: 202, schema: closeNowAccepted },
-    errors: [...AUTHED, "VALIDATION", "PLAN_INVALID", "ACCOUNT_MODE_MISMATCH", "BROKER_UNAVAILABLE"],
+    errors: [
+      ...AUTHED,
+      "VALIDATION",
+      "PLAN_INVALID",
+      "ACCOUNT_MODE_MISMATCH",
+      "BROKER_UNAVAILABLE",
+      "SHUTTING_DOWN",
+    ],
   },
   {
     method: "get",

@@ -18,6 +18,7 @@ import {
   gates,
   markInterrupted,
   persistResults,
+  shuttingDown,
   type ExecuteRefusal,
   type RecordComplete,
 } from "./executions";
@@ -113,10 +114,13 @@ export async function closeNow(
   const summary = await storePlan(svc, db, userId, plan, req, positions, record);
   const started = await svc.runner.start(summary.id, plan.items, { urgent: true });
   // A fresh plan id can't already be claimed; this only guards against a broken store.
-  if (!started.ok) return { ok: false, code: "INTERNAL", message: "Couldn't start the close. Try again." };
+  if (!started.ok) {
+    if (started.code === "SHUTTING_DOWN") return shuttingDown;
+    return { ok: false, code: "INTERNAL", message: "Couldn't start the close. Try again." };
+  }
   urgentFilters.set(started.executionId, key);
   if (urgentFilters.size > 100) urgentFilters.delete(urgentFilters.keys().next().value ?? "");
-  void persistResults(svc.runner, db, started.executionId, complete);
+  svc.background.track(persistResults(svc.runner, db, started.executionId, complete));
   return { ok: true, executionId: started.executionId, summary };
 }
 

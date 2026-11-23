@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23: Graceful shutdown: SIGTERM → refuse executes before claim (503 SHUTTING_DOWN), abort normal runs, close-now keeps going, drain 15 s incl. result writes, then abort all + mark interrupted, close broker then DB. Needs NEXT_MANUAL_SIG_HANDLE=true (Next exits on SIGTERM otherwise; env check enforces it outside mock)
 - 2026-11-23: Close-now reads positions/orders leniently (getPositionsForClose): a row with ticket+symbol+side is closed with unknown numbers; a row without is listed as a loud "NOT closed, close it in MT5" warning. Before: one bad row anywhere → 503 on the panic button
 - 2026-11-23: Restart recovery: items "pending" at claim, "sending" before first send. Normal runs refuse to send if that write fails; close-now never waits on it (closes are safe to resend). Boot: pending → skipped "not sent" (retryable), sending → unknown
 - 2026-11-23 (owner): UI uses the ORBIT pack's visual direction ("The Observatory", docs/12) but keeps live trading and stays phone-first; the pack's paper-only rules don't apply. Built in stages: identity + shell first
@@ -75,7 +76,7 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - ~~Restart recovery~~ done: pending rows at claim, "sending" before each send, boot recovery resolves leftovers.
 - Re-auth for caps changes (settings route).
 - ~~Persistence and restart recovery~~ done (except: entries still "sending" at boot → reconcile by clientId, lands with Phase 08 entries).
-- **Graceful shutdown**: stop accepting work, abort all, drain in-flight and settling (~15 s), close the broker, flush audit.
+- ~~Graceful shutdown~~ done (docs/08: host kill timeout must be set, Fly default 5 s, Railway 0 s).
 - **Drift guard at execute** (R7.1 with `before`, R7.2 quote age, §7) on the execute route; items loaded from the stored plan only.
 - **Circuit breaker**: after K consecutive NOT_CONNECTED/timeouts, probe health, fail the rest fast ("broker unavailable").
 - **Observability**: typed event hook for limiter waits, pauses, settles, reconcile polls, revalidate, abort; item wall time; metrics + alerts

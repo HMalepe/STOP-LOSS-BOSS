@@ -24,7 +24,24 @@ MAX_RISK_PCT_PER_ACTION=2   # % of equity at risk to SL, per action (R9.2)
 SPREAD_GUARD_K=3            # adaptive spread guard multiplier (R9.4b)
 SPREAD_WINDOW_SEC=300
 WORKER_URL= / WORKER_SHARED_SECRET=   # Phase 9
+NEXT_MANUAL_SIG_HANDLE=true # required outside mock: lets our shutdown drain run (see Graceful shutdown)
+SHUTDOWN_DRAIN_MS=15000     # how long running batches get to finish on SIGTERM
 ```
+
+## Graceful shutdown (deploys and restarts)
+On SIGTERM the app stops accepting executes (503 `SHUTTING_DOWN`, `Retry-After: 5`, nothing claimed), tells normal
+batches to stop picking up new items, lets close-now keep going, waits up to `SHUTDOWN_DRAIN_MS` for running batches and
+their result writes, then aborts the rest, marks them interrupted (never-sent items "not sent", mid-send items unknown),
+closes the broker and the database, and exits. A second signal exits at once; boot recovery cleans up on the next start.
+
+Two settings make this real. Both defaults kill the process before the drain can finish:
+- **Next.js** exits on SIGTERM immediately (`process.exit(143)`) unless `NEXT_MANUAL_SIG_HANDLE` is set. Verified in
+  `next/dist/server/lib/start-server.js`. `pnpm start` sets it; the env check refuses demo/live without it.
+- **The host's kill timeout** must exceed `SHUTDOWN_DRAIN_MS` + ~15 s (grace, bounded closes, backstop):
+  - Fly: `kill_timeout = 35` as a **top-level** key in `fly.toml` (default 5 s, max 300 s;
+    [docs](https://fly.io/docs/reference/configuration/)). Under `[http_service]` it is ignored.
+  - Railway: service variable `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=35` (default 0 s, i.e. SIGKILL straight after
+    SIGTERM; [docs](https://docs.railway.com/deployments/deployment-teardown)).
 
 ## Database roles (least privilege)
 Migrations run as the database owner. The app itself runs as `order_desk_app` (created by `0002_security_hardening.sql`,

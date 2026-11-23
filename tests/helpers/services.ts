@@ -1,4 +1,5 @@
 /** TradingServices on a MockBroker (no real latency) with the real runner and the DB-backed execution store. */
+import { TaskTracker } from "@/server/shutdown";
 import type { ManualClock } from "@/domain/clock";
 import type { BrokerProvider } from "@/broker/BrokerProvider";
 import type { MockBroker } from "@/broker/MockBroker";
@@ -20,6 +21,7 @@ export function mockServices(
     envHalted: false,
     clock,
     runner: buildRunner(b, db, clock),
+    background: new TaskTracker(),
     accountRef: null,
     maxPerBatch: 1_000,
     ...over,

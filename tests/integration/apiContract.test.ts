@@ -185,6 +185,14 @@ describe("every error code in docs/04, from a real request", () => {
     await expectError(await routes.state(get("/api/state", s.cookie)), "BROKER_UNAVAILABLE");
   });
 
+  it("SHUTTING_DOWN: 503 with Retry-After, the plan is not claimed", async () => {
+    const id = await planId();
+    svc.runner.stopAccepting();
+    const res = await exec(id);
+    expect(res.headers.get("Retry-After")).toBe("5");
+    await expectError(res, "SHUTTING_DOWN");
+  });
+
   it("NOT_FOUND", async () => {
     await expectError(await routes.getPlan(get("/api/plans/x", s.cookie), "x"), "NOT_FOUND");
   });

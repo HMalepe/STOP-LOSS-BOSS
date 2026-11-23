@@ -15,6 +15,7 @@ export const ERROR_CODES = [
   "LIVE_NOT_ENABLED",
   "ACCOUNT_MODE_MISMATCH",
   "BROKER_UNAVAILABLE",
+  "SHUTTING_DOWN",
   "NOT_FOUND",
   "INTERNAL",
 ] as const;
@@ -36,6 +37,7 @@ const STATUS: Record<ErrorCode, number> = {
   LIVE_NOT_ENABLED: 403,
   ACCOUNT_MODE_MISMATCH: 403,
   BROKER_UNAVAILABLE: 503,
+  SHUTTING_DOWN: 503,
   NOT_FOUND: 404,
   INTERNAL: 500,
 };
@@ -52,9 +54,11 @@ export function fail(
   opts: { details?: unknown; headers?: Record<string, string> } = {},
 ): Response {
   const error = { code, message, ...(opts.details === undefined ? {} : { details: opts.details }) };
+  // A restart takes seconds: tell clients when to come back.
+  const retry: Record<string, string> = code === "SHUTTING_DOWN" ? { "Retry-After": "5" } : {};
   return new Response(JSON.stringify({ error }), {
     status: STATUS[code],
-    headers: { ...NO_STORE, ...opts.headers },
+    headers: { ...NO_STORE, ...retry, ...opts.headers },
   });
 }
 
