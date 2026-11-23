@@ -3,7 +3,7 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 05 (auth and security) ⬜, next up
+- Phase: 06 (API routes) ⬜, next up. Phase 05 ✅
 - Current milestone: none
 - Blockers: **Q2** (Exness demo connected to MetaApi) for the live [T] tests in Phase 03. MockBroker and adapter code can start without it
 
@@ -15,7 +15,7 @@
 | 02 | Domain core | ✅ | 294 tests, domain 100% lines / 99% branches, fuzzed. Safety review: 1 critical + 1 high found and fixed |
 | 03 | Broker adapter | ✅ | 460 tests. SDK contract verified from the package. Board review (architect, trading systems, SRE): 1 critical, 8 high/must-fix fixed. Live demo contract run pending Q2 |
 | 04 | Execution engine | ✅ | 554 tests + `pnpm load` (1,000 close-now 22 s, 0 duplicates). Board review (safety, SRE, QA): all critical/high fixed |
-| 05 | Auth and security | ⬜ | |
+| 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
 | 06 | API routes | ⬜ | |
 | 07 | UI | ⬜ | |
 | 08 | Order Desk (bulk orders, presets, ladders) | ⬜ | |
@@ -25,6 +25,9 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23: Throttling is reserve-then-verify under an advisory lock; per network (IPv4 / IPv6 /64) + per account on the second factor only (never account-wide on the password)
+- 2026-11-23: Client IP only from TRUSTED_IP_HEADER (required in demo/live); audit chain HMAC-keyed by an app-held key; owner rotation is in place
+- 2026-11-23: Nested db.tx joins the outer transaction, so every change commits with its audit row
 - 2026-11-21: Close-at defaults to raw X and states bid/ask timing in the preview ([ADR-0004](docs/adr/0004-close-at-bid-ask-asymmetry.md))
 - 2026-11-21: Batches identified by magic number, comment is a label only ([ADR-0005](docs/adr/0005-batch-identity-magic.md))
 - 2026-11-21: Reads come from streamed state during batches, to keep credits for trades ([ADR-0007](docs/adr/0007-streaming-reads-single-service.md))
@@ -58,7 +61,9 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - 2026-11-22: Event stream: sequence numbers for resume, bounded subscriber buffers, history released after 1 h
 - 2026-11-21: Deferred: R1.1 batch filter → Phase 08 with R9.1; stale-quote check → drift guard §7 (Phase 04/06)
 
-## Carry-overs to Phase 05/06 (from the Phase 03 and 04 board reviews)
+## Carry-overs to Phase 06 (from the Phase 03, 04 and 05 reviews)
+- **Wire the gates**: `tradingGate` (kill switch) and `tradingModeGate` (live opt-in twice) on every trading route; tests 10 and 12 in docs/06.
+- Re-auth for caps changes (settings route).
 - **Persistence and restart recovery**: execution row + per-item intent ("sending") before each send, result after; on boot mark running
   executions interrupted, items still "sending" → unknown, entries reconciled by clientId. DB unique constraint on executions.plan_id.
 - **Graceful shutdown**: stop accepting work, abort all, drain in-flight and settling (~15 s), close the broker, flush audit.
