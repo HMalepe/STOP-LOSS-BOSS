@@ -8,7 +8,10 @@ import { markInterrupted } from "@/server/trading/executions";
 import { buildRunner, type TradingServices } from "@/server/trading/services";
 import { shutdown } from "@/server/shutdown";
 import { mockServices } from "../helpers/services";
-import { post, signedIn, type SignedIn } from "../helpers/session";
+import { get, post, signedIn, type SignedIn } from "../helpers/session";
+import { makeAdminRoutes } from "@/server/http/adminRoutes";
+import { Observability } from "@/server/observability";
+import { realScheduler } from "@/execution/scheduler";
 
 let s: SignedIn;
 let svc: TradingServices;
@@ -147,5 +150,43 @@ describe("circuit breaker through the execute route", () => {
     expect(fast.length).toBeGreaterThan(0);
     expect(fast.every((r) => r.state === "failed" && r.attempts === 0)).toBe(true);
     expect(rows.every((r) => r.state === "failed")).toBe(true);
+  });
+});
+
+describe("observability through a real execute", () => {
+  it("every broker call is logged with its execution; outcomes are counted; metrics are owner-only", async () => {
+    const lines: { level: string; obj: Record<string, unknown> }[] = [];
+    const sink = (level: string) => (obj: object) =>
+      lines.push({ level, obj: obj as Record<string, unknown> });
+    const obs = new Observability({ info: sink("info"), warn: sink("warn"), error: sink("error") });
+    const x: TradingServices = {
+      ...svc,
+      observability: obs,
+      runner: buildRunner(broker, s.db, s.clock, realScheduler, obs),
+    };
+    const id = await preview(x);
+    const res = await routesFor(x).execute(post(`/api/plans/${id}/execute`, {}, s.cookie), id);
+    const { executionId } = (await res.json()) as { executionId: string };
+    for await (const { event } of x.runner.events(executionId)) if (event.type === "complete") break;
+
+    const calls = lines.filter((l) => l.obj.executionId === executionId && "attempt" in l.obj);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((l) => typeof l.obj.code === "number" && typeof l.obj.latencyMs === "number")).toBe(
+      true,
+    );
+    const snap = obs.snapshot();
+    expect(snap.counters.items_done).toBe(calls.length);
+    expect(snap.counters.executions_complete).toBe(1);
+    expect(lines.filter((l) => l.level === "error")).toEqual([]);
+
+    const admin = makeAdminRoutes(
+      s.guard,
+      () => false,
+      undefined,
+      () => obs.snapshot(),
+    );
+    const ok = await admin.metrics(get("/api/admin/metrics", s.cookie));
+    expect(await ok.json()).toEqual(JSON.parse(JSON.stringify(snap)));
+    expect((await admin.metrics(get("/api/admin/metrics"))).status).toBe(401);
   });
 });

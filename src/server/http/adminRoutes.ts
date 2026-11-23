@@ -4,6 +4,7 @@ import { audit, auditKey } from "@/server/audit/audit";
 import { SESSION_COOKIE, clearCookie } from "@/server/auth/cookies";
 import { hasFreshReauth, revokeAllSessions } from "@/server/auth/login";
 import { killSwitchState, setKillSwitch } from "@/server/killSwitch";
+import type { ObsSnapshot } from "@/server/observability";
 import type { makeGuard } from "./guard";
 import { fail, ok } from "./respond";
 import { parseJson } from "./request";
@@ -18,8 +19,15 @@ export function makeAdminRoutes(
   envHalted: () => boolean,
   /** Called after the kill switch goes ON: stop every running batch except close-now (security review M3). */
   onHalt: () => Promise<unknown> = () => Promise.resolve(),
+  /** Counters and breaker state; undefined until trading services have started. */
+  metrics: () => ObsSnapshot | undefined = () => undefined,
 ) {
   return {
+    /** Owner only: counters since process start (calls, outcomes, alerts' causes) and the breaker's state. */
+    metrics: guard.authed({}, () =>
+      Promise.resolve(ok(metrics() ?? { counters: {}, breaker: "closed", started: false })),
+    ),
+
     killSwitchGet: guard.authed({}, async ({ deps }) => ok(await killSwitchState(deps.db, envHalted()))),
 
     /** ON: always allowed (getting safe must be instant). OFF: the sensitive direction, re-auth required. */

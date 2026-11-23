@@ -441,3 +441,27 @@ describe("graceful shutdown hooks", () => {
     expect(runner.running()).toEqual([]);
   });
 });
+
+describe("runner events (observability)", () => {
+  it("every item and the completion reach onEvent with the execution id and urgency; a throwing hook changes nothing", async () => {
+    const { s, broker, items } = setup();
+    const seen: string[] = [];
+    const runner = new InProcessRunner({
+      broker,
+      limiter: new CreditLimiter({ capacity: 5000, windowMs: 10_000, maxInFlight: 8, scheduler: s }),
+      scheduler: s,
+      concurrency: 2,
+      random: () => 0.5,
+      store: new InMemoryExecutionStore(),
+      newId: () => "exO",
+      onEvent: (id, e, urgent) => {
+        seen.push(`${id}:${e.type}:${String(urgent)}`);
+        throw new Error("hook bug");
+      },
+    });
+    await runner.start("p", items(2), { urgent: true });
+    const events = await s.run(drain(runner.events("exO")));
+    expect(events.map((e) => e.type)).toEqual(["item", "item", "complete"]);
+    expect(seen).toEqual(["exO:item:true", "exO:item:true", "exO:complete:true"]);
+  });
+});

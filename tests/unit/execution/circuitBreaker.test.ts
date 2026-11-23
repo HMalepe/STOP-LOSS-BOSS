@@ -114,3 +114,28 @@ describe("circuit breaker", () => {
     expect(b.reason()).toBe("broker unavailable (3 connection failures in a row)");
   });
 });
+
+describe("state changes are reported (observability)", () => {
+  it("onChange fires once per transition, never for a repeat, and a throwing listener can't break it", async () => {
+    const s = new ManualClock(0);
+    const seen: string[] = [];
+    const b = new CircuitBreaker({
+      threshold: 2,
+      cooldownMs: 10,
+      clock: s,
+      probe: () => Promise.resolve(true),
+      onChange: (state) => {
+        seen.push(state);
+        throw new Error("listener bug");
+      },
+    });
+    b.record(answered);
+    b.record(down);
+    b.record(down);
+    b.record(down);
+    s.advance(10);
+    await b.allow();
+    b.record(answered);
+    expect(seen).toEqual(["open", "halfOpen", "closed"]);
+  });
+});

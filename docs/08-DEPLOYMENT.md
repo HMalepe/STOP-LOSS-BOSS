@@ -28,6 +28,17 @@ NEXT_MANUAL_SIG_HANDLE=true # required outside mock: lets our shutdown drain run
 SHUTDOWN_DRAIN_MS=15000     # how long running batches get to finish on SIGTERM
 ```
 
+## Health checks and alerts
+- **Liveness** `GET /api/health`: 200 while the process answers. Point the host's restart check here.
+- **Readiness** `GET /api/health/ready`: 200 only if the database answers, the broker is connected AND synchronized,
+  and the app isn't shutting down; otherwise 503 with `{ready, checks: {db, broker, accepting}}` (booleans only).
+  Point the host's traffic/deploy check here. A cold process kicks its broker start from this probe (at most once per 5 s).
+- **Alerts** are log lines at level `error` with an `alert` field (`src/server/observability.ts`). Create a log alert
+  on `alert` existing; each one means a human should look:
+  `unknown_outcome` (check MT5 now) · `breaker_open` · `failure_rate` · `execution_slow` · `interrupted`.
+- **Metrics** `GET /api/admin/metrics` (owner session): counters since process start and the breaker state.
+- Every broker call is an `info` line with executionId, op, target, attempt, code and latency.
+
 ## Graceful shutdown (deploys and restarts)
 On SIGTERM the app stops accepting executes (503 `SHUTTING_DOWN`, `Retry-After: 5`, nothing claimed), tells normal
 batches to stop picking up new items, lets close-now keep going, waits up to `SHUTDOWN_DRAIN_MS` for running batches and

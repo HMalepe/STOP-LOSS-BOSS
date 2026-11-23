@@ -1,4 +1,5 @@
 /** TradingServices on a MockBroker (no real latency) with the real runner and the DB-backed execution store. */
+import { Observability } from "@/server/observability";
 import { TaskTracker } from "@/server/shutdown";
 import type { ManualClock } from "@/domain/clock";
 import type { BrokerProvider } from "@/broker/BrokerProvider";
@@ -22,6 +23,11 @@ export function mockServices(
     clock,
     runner: buildRunner(b, db, clock),
     background: new TaskTracker(),
+    observability: new Observability({
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+    }),
     accountRef: null,
     capCeilings: { maxOrdersPerAction: 100, maxTotalLots: 5, maxRiskPct: 2, maxPositionsPerBatch: 1_000 },
     ...over,

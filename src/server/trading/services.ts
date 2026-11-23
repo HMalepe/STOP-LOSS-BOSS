@@ -12,6 +12,8 @@ import { openMetaApiConnection } from "@/broker/metaapi/sdk";
 import type { Clock } from "@/domain/clock";
 import { systemClock } from "../clock";
 import { capsFromEnv, type Caps } from "../caps";
+import { getLogger } from "../logger";
+import { Observability } from "../observability";
 import { getEnv, type Env, type TradingMode } from "../env";
 import { CircuitBreaker } from "@/execution/circuitBreaker";
 import { CreditLimiter } from "@/execution/rateLimiter";
@@ -33,6 +35,8 @@ export interface TradingServices {
   readonly runner: JobRunner;
   /** Result writes still in progress; graceful shutdown waits for them before closing the database. */
   readonly background: TaskTracker;
+  /** Structured call logs, counters and alerts (observability.ts). */
+  readonly observability: Observability;
   /** Hard ceilings from the env (MAX_*). The owner's own caps (Settings) can only be at or below these. */
   readonly capCeilings: Caps;
   /** The MetaApi account id (the accounts row whose live_enabled counts). null in mock mode. */
@@ -51,6 +55,7 @@ export function buildRunner(
   db: Db,
   clock: Clock,
   scheduler: Scheduler = realScheduler,
+  obs?: Observability,
 ): JobRunner {
   return new InProcessRunner({
     broker,
@@ -68,12 +73,30 @@ export function buildRunner(
       threshold: BREAKER.threshold,
       cooldownMs: BREAKER.cooldownMs,
       clock,
+      ...(obs === undefined
+        ? {}
+        : {
+            onChange: (state, reason) => {
+              obs.breaker(state, reason);
+            },
+          }),
       probe: async () => {
         const h = await broker.health();
         return h.connected && h.connectedToBroker && h.synchronized;
       },
     }),
     revalidate: makeRevalidator(broker, { clock }),
+    ...(obs === undefined
+      ? {}
+      : {
+          onCall: (e) => {
+            obs.call(e);
+          },
+          onEvent: (executionId, event, urgent) => {
+            if (event.type === "item") obs.item(executionId, event.item);
+            else obs.complete(executionId, event.summary, urgent);
+          },
+        }),
   });
 }
 
@@ -186,6 +209,8 @@ export function demoMockBroker(
 
 interface Shared {
   services?: Promise<TradingServices> | undefined;
+  /** The same services once the start has finished (sync access for health checks). */
+  ready?: TradingServices | undefined;
 }
 const KEY = "__orderDeskTrading";
 const g = globalThis as typeof globalThis & { [KEY]?: Shared };
@@ -204,9 +229,13 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
         );
   await assertAccountMatchesMode(broker, env.TRADING_MODE);
   const db = await getDb();
-  const runner = buildRunner(broker, db, clock);
+  const observability = new Observability(getLogger());
+  const runner = buildRunner(broker, db, clock, realScheduler, observability);
   // A fresh process holds no runs: anything still "running" in the database was cut off by a restart.
-  await recoverInterrupted(db, (id) => runner.status(id)?.state === "running");
+  observability.interrupted(
+    await recoverInterrupted(db, (id) => runner.status(id)?.state === "running"),
+    "boot recovery",
+  );
   return {
     broker,
     specs: new SpecCache((s) => broker.getSymbolSpec(s), clock),
@@ -215,6 +244,7 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
     clock,
     runner,
     background: new TaskTracker(),
+    observability,
     capCeilings: capsFromEnv(env),
     accountRef: env.TRADING_MODE === "mock" ? null : (env.METAAPI_ACCOUNT_ID ?? null),
   };
@@ -222,10 +252,16 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
 
 /** Process-wide services. A failed start (broker down, wrong account) is forgotten so the next request retries. */
 export function getTradingServices(): Promise<TradingServices> {
-  shared.services ??= create(getEnv(), systemClock).catch((e: unknown) => {
-    shared.services = undefined;
-    throw e;
-  });
+  shared.services ??= create(getEnv(), systemClock).then(
+    (svc) => {
+      shared.ready = svc;
+      return svc;
+    },
+    (e: unknown) => {
+      shared.services = undefined;
+      throw e;
+    },
+  );
   return shared.services;
 }
 
@@ -244,7 +280,7 @@ export async function shutdownTradingServices(
     if (db !== undefined) await db.close().catch(() => undefined);
     return shutdown(undefined, { sleep });
   }
-  return shutdown(
+  const report = await shutdown(
     {
       runner: svc.runner,
       background: svc.background,
@@ -254,6 +290,13 @@ export async function shutdownTradingServices(
     },
     { ...opts, sleep },
   );
+  svc.observability.interrupted(report.interrupted, "shutdown could not drain");
+  return report;
+}
+
+/** Started and finished starting, or undefined. Never starts anything. */
+export function readyTradingServices(): TradingServices | undefined {
+  return shared.ready;
 }
 
 /** The services if they've already started; never connects a broker just to ask. */

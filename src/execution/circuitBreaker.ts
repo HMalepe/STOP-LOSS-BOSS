@@ -34,6 +34,8 @@ export interface BreakerOptions {
   readonly clock: Clock;
   /** true = healthy enough to try again. A throw counts as unhealthy. */
   readonly probe: () => Promise<boolean>;
+  /** Called on every state transition (observability). Must not throw; if it does, it's ignored. */
+  readonly onChange?: (state: BreakerState, reason: string) => void;
 }
 
 export class CircuitBreaker {
@@ -41,6 +43,7 @@ export class CircuitBreaker {
   readonly #cooldownMs: number;
   readonly #clock: Clock;
   readonly #probe: () => Promise<boolean>;
+  readonly #onChange: ((state: BreakerState, reason: string) => void) | undefined;
   #state: BreakerState = "closed";
   #failures = 0;
   #openedAt = 0;
@@ -51,6 +54,7 @@ export class CircuitBreaker {
     this.#cooldownMs = Math.max(0, o.cooldownMs ?? 5_000);
     this.#clock = o.clock;
     this.#probe = o.probe;
+    this.#onChange = o.onChange;
   }
 
   get state(): BreakerState {
@@ -61,7 +65,7 @@ export class CircuitBreaker {
   record(r: TradeResult): void {
     if (!isConnectionFailure(r)) {
       this.#failures = 0;
-      this.#state = "closed";
+      this.#set("closed");
       return;
     }
     this.#failures += 1;
@@ -81,8 +85,18 @@ export class CircuitBreaker {
   }
 
   #open(): void {
-    this.#state = "open";
     this.#openedAt = this.#clock.now();
+    this.#set("open");
+  }
+
+  #set(state: BreakerState): void {
+    if (state === this.#state) return;
+    this.#state = state;
+    try {
+      this.#onChange?.(state, state === "open" ? this.reason() : "");
+    } catch {
+      // A listener bug must never change whether trades go out.
+    }
   }
 
   async #runProbe(): Promise<boolean> {
@@ -98,7 +112,7 @@ export class CircuitBreaker {
       this.#open();
       return false;
     }
-    this.#state = "halfOpen";
+    this.#set("halfOpen");
     return true;
   }
 }

@@ -54,6 +54,8 @@ export interface JobRunner {
   activeUrgent(): string | undefined;
   /** Shutdown: refuse new executions from now on. Running ones are untouched. */
   stopAccepting(): void;
+  /** False once shutdown has begun. */
+  isAccepting(): boolean;
   /** Resolves when no execution is running. */
   idle(): Promise<void>;
   /** Ids of executions still running. */
@@ -82,6 +84,8 @@ export interface InProcessRunnerDeps extends Omit<ExecuteDeps, "signal" | "prior
   readonly maxSubscriberBuffer?: number;
   /** Max status records kept (default 1,000). */
   readonly maxExecutions?: number;
+  /** Every item result and completion, with the execution id (observability). Errors in it are ignored. */
+  readonly onEvent?: (executionId: string, event: ExecEvent, urgent: boolean) => void;
 }
 
 export class InProcessRunner implements JobRunner {
@@ -191,6 +195,11 @@ export class InProcessRunner implements JobRunner {
           exec.progress = event.summary;
         }
         for (const ch of exec.subscribers) ch.push(sequenced);
+        try {
+          this.#deps.onEvent?.(executionId, event, urgent);
+        } catch {
+          // Observability must never change an execution.
+        }
       }
     } finally {
       this.#finish(exec);
@@ -225,6 +234,10 @@ export class InProcessRunner implements JobRunner {
 
   stopAccepting(): void {
     this.#accepting = false;
+  }
+
+  isAccepting(): boolean {
+    return this.#accepting;
   }
 
   async idle(): Promise<void> {
