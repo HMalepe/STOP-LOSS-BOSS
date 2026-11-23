@@ -41,6 +41,8 @@
   "dependencies": {
     "@electric-sql/pglite": "0.5.15",
     "@node-rs/argon2": "2.2.2",
+    "geist": "1.9.2",
+    "lucide-react": "1.70.0",
     "metaapi.cloud-sdk": "29.3.4",
     "next": "16.4.6",
     "pino": "10.4.0",
