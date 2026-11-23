@@ -1,5 +1,6 @@
 import { Gauge, ShieldCheck } from "lucide-react";
 import { getEnv } from "@/server/env";
+import { requireSession } from "@/server/http/pageSession";
 import { AppShell, PageHeader, Panel } from "@/ui/AppShell";
 import { HaltedBanner } from "@/ui/HaltedBanner";
 import { Metric } from "@/ui/Metric";
@@ -8,7 +9,8 @@ import { Metric } from "@/ui/Metric";
 export const dynamic = "force-dynamic";
 
 /** The desk frame. Live positions, actions and Close All Now land here in Phase 07 M3/M4 (wired to /api/state). */
-export default function HomePage() {
+export default async function HomePage() {
+  await requireSession();
   const env = getEnv();
   return (
     <AppShell

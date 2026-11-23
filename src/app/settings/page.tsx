@@ -1,11 +1,13 @@
 import { Settings2 } from "lucide-react";
 import { getEnv } from "@/server/env";
+import { requireSession } from "@/server/http/pageSession";
 import { AppShell, PageHeader, Panel } from "@/ui/AppShell";
 import { EmptyState } from "@/ui/States";
 
 export const dynamic = "force-dynamic";
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  await requireSession();
   return (
     <AppShell mode={getEnv().TRADING_MODE}>
       <PageHeader title="Settings" subtitle="Kill switch, limits, sign-in and the account mode." />

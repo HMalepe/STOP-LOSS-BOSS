@@ -212,6 +212,7 @@ describe("process services", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
+    delete (globalThis as Record<string, unknown>).__orderDeskDb;
     delete (globalThis as Record<string, unknown>).__orderDeskTrading;
   });
 

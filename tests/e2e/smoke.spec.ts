@@ -1,14 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-test("home renders on a phone with the mode badge and no horizontal scroll", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Order Desk", level: 1 })).toBeVisible();
+test("sign-in renders on a phone with the mode badge and no horizontal scroll", async ({ page }) => {
+  await page.goto("/login");
+  await expect(page.getByRole("heading", { name: "Sign in", level: 1 })).toBeVisible();
 
   const badge = page.getByRole("status", { name: /mock mode/i });
   await expect(badge).toBeVisible();
   await expect(badge).toHaveText("MOCK");
-
-  await expect(page.getByText("Safety limits per action")).toBeVisible();
   await expect(page.getByRole("alert").filter({ hasText: "Trading halted" })).toHaveCount(0);
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

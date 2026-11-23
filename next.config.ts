@@ -17,7 +17,10 @@ const config: NextConfig = {
   poweredByHeader: false,
   typedRoutes: true,
   // Server-only, CommonJS, loaded with require(): never bundle it.
-  serverExternalPackages: ["metaapi.cloud-sdk"],
+  // metaapi: its "import" condition points at a browser build (see src/broker/metaapi/sdk.ts).
+  // pglite + argon2: load their WASM/native files by path; bundled into page chunks they break
+  // ("path must be a string… received URL"), so Node loads them as-is.
+  serverExternalPackages: ["metaapi.cloud-sdk", "@electric-sql/pglite", "@node-rs/argon2"],
   headers: () => Promise.resolve([{ source: "/:path*", headers: securityHeaders }]),
 };
 

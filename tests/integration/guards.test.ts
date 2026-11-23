@@ -88,6 +88,17 @@ describe("origin check (CSRF, second line after SameSite=Strict)", () => {
     expect(originAllowed(req(method, headers), appOrigin)).toBe(expected);
   });
 
+  it("mock loopback: 127.0.0.1 and localhost are the same machine; port and scheme must match", () => {
+    const at = (url: string, origin: string) =>
+      originAllowed(req("POST", { origin }, undefined, url), undefined);
+    expect(at("http://localhost:3000/api/x", "http://127.0.0.1:3000")).toBe(true);
+    expect(at("http://localhost:3000/api/x", "http://[::1]:3000")).toBe(true);
+    expect(at("http://localhost:3000/api/x", "http://127.0.0.1:3001")).toBe(false);
+    expect(at("http://localhost:3000/api/x", "https://127.0.0.1:3000")).toBe(false);
+    expect(at("http://localhost:3000/api/x", "not a url")).toBe(false);
+    expect(at("http://192.168.1.5:3000/api/x", "http://127.0.0.1:3000")).toBe(false);
+  });
+
   it.each([
     ["http://localhost:3000", true],
     ["http://127.0.0.1:3000", true],
@@ -284,6 +295,7 @@ describe("routes wiring", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
+    delete (globalThis as Record<string, unknown>).__orderDeskDb;
   });
 
   it("the real route table is built from the process env", async () => {

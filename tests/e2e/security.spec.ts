@@ -5,13 +5,13 @@ test("pages carry a per-request nonce CSP and still render with zero CSP violati
   page.on("console", (m) => {
     if (m.type() === "error" && /Content Security Policy/i.test(m.text())) violations.push(m.text());
   });
-  const res1 = await page.goto("/");
+  const res1 = await page.goto("/login");
   const csp1 = res1?.headers()["content-security-policy"] ?? "";
   expect(csp1).toMatch(/script-src 'self' 'nonce-[A-Za-z0-9+/=]+' 'strict-dynamic'/);
   expect(csp1).toContain("frame-ancestors 'none'");
-  await expect(page.getByRole("heading", { name: "Order Desk" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in", level: 1 })).toBeVisible();
 
-  const res2 = await page.goto("/");
+  const res2 = await page.goto("/login");
   const csp2 = res2?.headers()["content-security-policy"] ?? "";
   expect(csp2).not.toBe(csp1); // a fresh nonce every time
   expect(violations).toEqual([]);
