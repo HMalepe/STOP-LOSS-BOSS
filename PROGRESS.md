@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23: Observability without a vendor: alerts are `error` log lines with an `alert` field (unknown_outcome, breaker_open, failure_rate, execution_slow, interrupted); hosts alert on logs. Health: /api/health (live), /api/health/ready (db + broker synced + accepting), booleans only
 - 2026-11-23: Caps live in `config` (key caps), any change needs fresh re-auth (docs/05 says "change", unlike the kill switch's one-way rule), audited before/after. Env MAX_* are hard ceilings: a stolen session + TOTP still can't exceed what was deployed
 - 2026-11-23: Circuit breaker, one per runner: 5 consecutive connection failures (not connected, adapter timeout, MT5 TIMEOUT/CONNECTION) open it; unsent items fail before taking credits as "not sent" (retryable); health() probe after 5 s → half-open. Close-now only feeds it, never fails fast (R6.6)
 - 2026-11-23: Graceful shutdown: SIGTERM → refuse executes before claim (503 SHUTTING_DOWN), abort normal runs, close-now keeps going, drain 15 s incl. result writes, then abort all + mark interrupted, close broker then DB. Needs NEXT_MANUAL_SIG_HANDLE=true (Next exits on SIGTERM otherwise; env check enforces it outside mock)
@@ -79,12 +80,11 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - ~~Re-auth for caps changes~~ done: `/api/settings/caps`.
 - ~~Persistence and restart recovery~~ done (except: entries still "sending" at boot → reconcile by clientId, lands with Phase 08 entries).
 - ~~Graceful shutdown~~ done (docs/08: host kill timeout must be set, Fly default 5 s, Railway 0 s).
-- **Drift guard at execute** (R7.1 with `before`, R7.2 quote age, §7) on the execute route; items loaded from the stored plan only.
+- ~~Drift guard at execute~~ done in Phase 06 M3.
 - ~~Circuit breaker~~ done.
-- **Observability**: typed event hook for limiter waits, pauses, settles, reconcile polls, revalidate, abort; item wall time; metrics + alerts
-  (any unknown > 0, long executions, error rate, breaker open). SDK logger at info+.
-- **createBroker() factory** failing closed: account tradeMode must match TRADING_MODE.
-- ~~Lenient close-now parse~~ done; health routes; history lookup by clientId (Phase 09).
+- ~~Observability~~ done: call logs, counters, log-based alerts, `/api/admin/metrics`. (Not yet: limiter wait times, SDK logger level.)
+- ~~createBroker() factory failing closed~~ done (assertAccountMatchesMode).
+- ~~Lenient close-now parse~~ done; ~~health routes~~ done; history lookup by clientId (Phase 09).
 - ADR-0010 one-request panic close: verify on demo first.
 
 ## Open questions for the owner
