@@ -19,11 +19,18 @@ The UI branch (`claude/determined-mccarthy-kgq7ml`) is merged in up to f2132c6; 
 - Deploy: host kill timeout must be > drain + 15 s. Fly default 5 s, Railway default 0 s (docs/08).
 - After merging UI work, run `pnpm next typegen` if tsc complains about `Route` types (stale generated types).
 
+## Added later this session
+- dbe8551 observability (call logs, counters, log alerts, /api/admin/metrics) + /api/health, /api/health/ready
+- 9078687 Phase 08 M1: `src/domain/entries.ts` buildMarketBatch (OD1), 100% branches
+- Merge note: UI moved the DB singleton to globalThis; `startedDb()` now returns `shared.db`.
+
 ## Next session should start by
-1. UI: Settings page can now call `/api/settings/caps` (POST needs a fresh re-auth; show `ceilings`).
-2. Remaining backend carry-overs: observability (typed event hook, metrics, alerts), health routes, history by clientId.
-3. Entries (Phase 08): reconcile items left `sending` by clientId at boot (ADR-0009) instead of plain unknown.
+1. Phase 08 M2: ladder in `src/domain/entries.ts` (R5.4 levels + dedupe, R5.5 pending type vs market, R5.6 offsets, R9.5 scaled lots).
+2. M3: wire market/ladder into preview/execute (remove from LATER_ACTIONS): batchSeq allocation for magic, R0.2 hedging,
+   R9.2 risk via `lossTickValue` (add to Quote/stream), R9.3 margin, R9.4 spread guard, caps from `effectiveCaps`,
+   ExecItem `market` from MarketEntryItem; boot reconcile of entries left `sending` by clientId (ADR-0009).
+3. M4: presets CRUD. UI can use `/api/settings/caps`, `/api/admin/metrics`.
 
 ## State check
-- `pnpm verify`: green (885 passed, 1 skipped). Load: 0 duplicates.
+- `pnpm verify`: green (912 passed, 1 skipped). Load: 0 duplicates.
 - Uncommitted changes: none after this note.
