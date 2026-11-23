@@ -1,4 +1,8 @@
-/** Apply supabase/migrations/*.sql in filename order, once each, recorded in schema_migrations. */
+/**
+ * Apply supabase/migrations/*.sql in filename order, once each, recorded in schema_migrations.
+ * The files are read at runtime from the repo (the always-on host runs `next start` in the checkout, ADR-0007), so the
+ * reads are marked turbopackIgnore: bundling must not try to trace them, which would pull the whole project in.
+ */
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "./sql";
@@ -12,11 +16,12 @@ export async function migrate(db: Db, dir: string = MIGRATIONS_DIR): Promise<str
   const done = new Set(
     (await db.query<{ name: string }>("select name from schema_migrations")).map((r) => r.name),
   );
-  const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
+  const files = (await readdir(/*turbopackIgnore: true*/ dir)).filter((f) => f.endsWith(".sql")).sort();
   const applied: string[] = [];
   for (const file of files) {
     if (done.has(file)) continue;
-    const sql = await readFile(path.join(dir, file), "utf8");
+    const fullPath = path.join(/*turbopackIgnore: true*/ dir, file);
+    const sql = await readFile(/*turbopackIgnore: true*/ fullPath, "utf8");
     await db.tx(async (t) => {
       await t.query(sql);
       await t.query("insert into schema_migrations (name) values ($1)", [file]);

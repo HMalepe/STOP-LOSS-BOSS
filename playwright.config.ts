@@ -26,6 +26,10 @@ export default defineConfig({
     command: `pnpm exec next start -p ${PORT}`,
     url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: !process.env.CI,
-    env: { TRADING_MODE: "mock" },
+    env: {
+      TRADING_MODE: "mock",
+      SESSION_SECRET: "e2e-only-session-secret-0123456789abcdef",
+      DATABASE_URL: "pglite://memory",
+    },
   },
 });

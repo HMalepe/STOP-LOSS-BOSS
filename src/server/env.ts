@@ -33,10 +33,15 @@ const schema = z
       .regex(/^[a-z0-9-]+$/, "must be a MetaApi region slug like new-york")
       .optional(),
 
-    SESSION_SECRET: z.string().min(32, "must be at least 32 characters").optional(),
+    // Always required: it encrypts the TOTP secret and so must be stable across restarts (Phase 05).
+    SESSION_SECRET: z.string().min(32, "must be at least 32 characters"),
     APP_ORIGIN: z.url().optional(),
 
-    DATABASE_URL: z.url().optional(),
+    // postgres(ql)://… for demo/live (Supabase); mock may use embedded Postgres: pglite://<dir> or pglite://memory.
+    DATABASE_URL: z
+      .string()
+      .regex(/^(postgres(ql)?:\/\/|pglite:)/, "must be a postgres:// URL (or pglite: in mock mode)")
+      .optional(),
     SUPABASE_URL: z.url().optional(),
     SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
 
@@ -59,8 +64,8 @@ const schema = z
       "METAAPI_TOKEN",
       "METAAPI_ACCOUNT_ID",
       "METAAPI_REGION",
-      "SESSION_SECRET",
       "APP_ORIGIN",
+      "DATABASE_URL",
     ] as const;
     for (const key of required) {
       if (env[key] === undefined) {
@@ -79,7 +84,18 @@ const schema = z
     ) {
       ctx.addIssue({ code: "custom", path: ["APP_ORIGIN"], message: "must be https:// in live mode" });
     }
-  });
+    if (env.DATABASE_URL?.startsWith("pglite:") === true) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["DATABASE_URL"],
+        message: `embedded pglite is for mock mode only, not ${env.TRADING_MODE}`,
+      });
+    }
+  })
+  .transform((env) => ({ ...env, DATABASE_URL: env.DATABASE_URL ?? MOCK_DATABASE_URL }));
+
+/** Mock mode's default: embedded Postgres persisted to ./.data, so `pnpm dev` needs no database server. */
+export const MOCK_DATABASE_URL = "pglite://.data/order-desk";
 
 export type Env = Readonly<z.output<typeof schema>>;
 
@@ -121,9 +137,9 @@ export function loadEnv(source: Readonly<Record<string, string | undefined>>): E
 export function secretValues(env: Env): string[] {
   const values: string[] = [];
   for (const v of [env.METAAPI_TOKEN, env.SESSION_SECRET, env.SUPABASE_SERVICE_ROLE_KEY, env.DATABASE_URL]) {
-    if (v !== undefined) values.push(v);
+    if (v !== undefined && !v.startsWith("pglite:")) values.push(v);
   }
-  if (env.DATABASE_URL !== undefined) {
+  if (!env.DATABASE_URL.startsWith("pglite:")) {
     const password = decodeURIComponent(new URL(env.DATABASE_URL).password);
     if (password !== "") values.push(password);
   }

@@ -26,6 +26,7 @@ function fakeIo() {
 describe("bootOrExit", () => {
   it("boots on a valid env", async () => {
     vi.stubEnv("TRADING_MODE", "mock");
+    vi.stubEnv("SESSION_SECRET", "z".repeat(40));
     vi.stubEnv("LOG_LEVEL", "silent");
     const { bootOrExit } = await import("@/server/boot");
     const { io, errors } = fakeIo();

@@ -8,6 +8,7 @@ afterEach(() => {
 describe("getEnv / getLogger", () => {
   it("validates process.env once and caches it", async () => {
     vi.stubEnv("TRADING_MODE", "mock");
+    vi.stubEnv("SESSION_SECRET", "z".repeat(40));
     vi.stubEnv("MAX_ORDERS_PER_ACTION", "42");
     const { getEnv } = await import("@/server/env");
     const first = getEnv();
@@ -24,6 +25,7 @@ describe("getEnv / getLogger", () => {
 
   it("builds one logger from the env", async () => {
     vi.stubEnv("LOG_LEVEL", "warn");
+    vi.stubEnv("SESSION_SECRET", "z".repeat(40));
     const { getLogger } = await import("@/server/logger");
     const logger = getLogger();
     expect(logger.level).toBe("warn");
