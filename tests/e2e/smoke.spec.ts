@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("home renders on a phone with the mode badge and no horizontal scroll", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Order Desk" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Order Desk", level: 1 })).toBeVisible();
 
   const badge = page.getByRole("status", { name: /mock mode/i });
   await expect(badge).toBeVisible();

@@ -3,7 +3,7 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 07 (UI) ⬜, next up. Phase 06 ✅
+- Phase: 07 (UI) 🟨. Phase 06 ✅
 - Current milestone: none
 - Blockers: **Q2** (Exness demo connected to MetaApi) for the live [T] tests in Phase 03. MockBroker and adapter code can start without it
 
@@ -17,7 +17,7 @@
 | 04 | Execution engine | ✅ | 554 tests + `pnpm load` (1,000 close-now 22 s, 0 duplicates). Board review (safety, SRE, QA): all critical/high fixed |
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
 | 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
-| 07 | UI | ⬜ | |
+| 07 | UI | 🟨 | Stage 1 ✅ design system + shell ("The Observatory", docs/12) |
 | 08 | Order Desk (bulk orders, presets, ladders) | ⬜ | |
 | 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
@@ -28,6 +28,7 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 ## Decisions log (one line each; link the ADR)
 - 2026-11-23: Close-now reads positions/orders leniently (getPositionsForClose): a row with ticket+symbol+side is closed with unknown numbers; a row without is listed as a loud "NOT closed, close it in MT5" warning. Before: one bad row anywhere → 503 on the panic button
 - 2026-11-23: Restart recovery: items "pending" at claim, "sending" before first send. Normal runs refuse to send if that write fails; close-now never waits on it (closes are safe to resend). Boot: pending → skipped "not sent" (retryable), sending → unknown
+- 2026-11-23 (owner): UI uses the ORBIT pack's visual direction ("The Observatory", docs/12) but keeps live trading and stays phone-first; the pack's paper-only rules don't apply. Built in stages: identity + shell first
 - 2026-11-23 (owner): Cross-account pair, same size, no stops: concurrent legs, failed leg → auto-close the filled one, survivor prompt, per-account gates ([ADR-0011](docs/adr/0011-cross-account-pair.md))
 - 2026-11-23: Close-now ignores the kill switch (R4.2) and LIVE_NOT_ENABLED (risk-reducing) but refuses ACCOUNT_MODE_MISMATCH; typed confirm "CLOSE". Retry-failed = new plan of `failed` items only (never `unknown`), through the normal execute path
 - 2026-11-23: Execute idempotency lives in the DB (plan status flip + executions insert, one tx). Drift guard: any invalid/frozen modify → PRICE_MOVED whole plan; R7.1 mismatches skipped up front and reported in the 202
