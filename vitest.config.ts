@@ -16,8 +16,9 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/domain/**/*.ts", "src/execution/**/*.ts", "src/server/**/*.ts", "src/broker/**/*.ts"],
-      // Needs a real MetaApi account: covered by the contract suite when demo creds are set, not by unit tests.
-      exclude: ["src/broker/metaapi/sdk.ts"],
+      // Need real external services (a MetaApi account / a Postgres server): covered by the contract suite and the
+      // deployed smoke test, not unit tests. The SQL itself is tested against real Postgres (PGlite).
+      exclude: ["src/broker/metaapi/sdk.ts", "src/server/db/postgres.ts"],
       reporter: ["text", "html"],
       thresholds: {
         // CLAUDE.md non-negotiable 10: money logic is held to 95%+.
