@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-23: Restart recovery: items "pending" at claim, "sending" before first send. Normal runs refuse to send if that write fails; close-now never waits on it (closes are safe to resend). Boot: pending → skipped "not sent" (retryable), sending → unknown
 - 2026-11-23 (owner): Cross-account pair, same size, no stops: concurrent legs, failed leg → auto-close the filled one, survivor prompt, per-account gates ([ADR-0011](docs/adr/0011-cross-account-pair.md))
 - 2026-11-23: Close-now ignores the kill switch (R4.2) and LIVE_NOT_ENABLED (risk-reducing) but refuses ACCOUNT_MODE_MISMATCH; typed confirm "CLOSE". Retry-failed = new plan of `failed` items only (never `unknown`), through the normal execute path
 - 2026-11-23: Execute idempotency lives in the DB (plan status flip + executions insert, one tx). Drift guard: any invalid/frozen modify → PRICE_MOVED whole plan; R7.1 mismatches skipped up front and reported in the 202
@@ -69,10 +70,9 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Carry-overs to Phase 06 (from the Phase 03, 04 and 05 reviews)
 - ~~Wire the gates~~ done on execute (M3); close-now in M4.
-- **Restart recovery** still open: items are persisted as they finish, not before send ("sending"); needs an executor hook.
+- ~~Restart recovery~~ done: pending rows at claim, "sending" before each send, boot recovery resolves leftovers.
 - Re-auth for caps changes (settings route).
-- **Persistence and restart recovery**: execution row + per-item intent ("sending") before each send, result after; on boot mark running
-  executions interrupted, items still "sending" → unknown, entries reconciled by clientId. DB unique constraint on executions.plan_id.
+- ~~Persistence and restart recovery~~ done (except: entries still "sending" at boot → reconcile by clientId, lands with Phase 08 entries).
 - **Graceful shutdown**: stop accepting work, abort all, drain in-flight and settling (~15 s), close the broker, flush audit.
 - **Drift guard at execute** (R7.1 with `before`, R7.2 quote age, §7) on the execute route; items loaded from the stored plan only.
 - **Circuit breaker**: after K consecutive NOT_CONNECTED/timeouts, probe health, fail the rest fast ("broker unavailable").

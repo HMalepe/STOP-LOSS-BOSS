@@ -1097,3 +1097,71 @@ describe("Channel limits", () => {
     expect(other.overflowed).toBe(false);
   });
 });
+
+describe("restart recovery: the intent to send is recorded before the send", () => {
+  it("beforeSend runs for each item before the broker sees it; duplicates never reach it", async () => {
+    const { s, broker, deps } = setup({}, 1);
+    const a = seedBuy(broker);
+    const b = seedBuy(broker);
+    const log: string[] = [];
+    const real = broker.modifyPosition.bind(broker);
+    vi.spyOn(broker, "modifyPosition").mockImplementation((id, levels) => {
+      log.push(`send ${id}`);
+      return real(id, levels);
+    });
+    const beforeSend = (index: number) => {
+      log.push(`intent ${String(index)}`);
+      return Promise.resolve();
+    };
+    const { results } = await collect(
+      [modify(a, 1.08), modify(b, 1.08), modify(a, 1.07)],
+      { ...deps, beforeSend },
+      s,
+    );
+    expect(log).toEqual(["intent 0", `send ${a}`, "intent 1", `send ${b}`]);
+    expect(results.map((r) => r.outcome)).toEqual(["done", "done", "skipped"]);
+  });
+
+  it("normal run: if the intent can't be recorded, that item is NOT sent (failed, says why); the rest run", async () => {
+    const { s, broker, deps } = setup({}, 1);
+    const a = seedBuy(broker);
+    const b = seedBuy(broker);
+    const spy = vi.spyOn(broker, "modifyPosition");
+    const beforeSend = (index: number) =>
+      index === 0 ? Promise.reject(new Error("db down")) : Promise.resolve();
+    const { results } = await collect([modify(a, 1.08), modify(b, 1.08)], { ...deps, beforeSend }, s);
+    expect(results[0]).toMatchObject({ outcome: "failed", attempts: 0, code: null });
+    expect(results[0]?.message).toMatch(/^not sent: couldn't record/);
+    expect(results[1]?.outcome).toBe("done");
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("urgent (close-now): bookkeeping never blocks or delays the close, even if it fails or hangs", async () => {
+    const { s, broker, deps } = setup({}, 1);
+    const a = seedBuy(broker);
+    const b = seedBuy(broker);
+    const calls: number[] = [];
+    const beforeSend = (index: number) => {
+      calls.push(index);
+      return index === 0 ? Promise.reject(new Error("db down")) : new Promise<void>(() => undefined);
+    };
+    const { results } = await collect([close(a), close(b)], { ...deps, priority: "urgent", beforeSend }, s);
+    expect(results.map((r) => r.outcome)).toEqual(["done", "done"]);
+    expect(calls).toEqual([0, 1]);
+    expect(await s.run(broker.getPositions())).toHaveLength(0);
+  });
+
+  it("aborted before start: no intent is recorded for items never picked up", async () => {
+    const { s, broker, deps } = setup({}, 1);
+    const ctl = new AbortController();
+    ctl.abort();
+    const beforeSend = vi.fn(() => Promise.resolve());
+    const { results } = await collect(
+      [close(seedBuy(broker))],
+      { ...deps, signal: ctl.signal, beforeSend },
+      s,
+    );
+    expect(results[0]?.outcome).toBe("skipped");
+    expect(beforeSend).not.toHaveBeenCalled();
+  });
+});

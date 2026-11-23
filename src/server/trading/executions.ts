@@ -18,7 +18,14 @@ import { decideModify, marketFrom, quoteProblems } from "@/domain/rules";
 import type { PlanItem, Skipped } from "@/domain/types";
 import type { ExecutionStore } from "@/execution/idempotency";
 import type { JobRunner } from "@/execution/jobRunner";
-import type { ExecEvent, ItemResult, Progress, Summary } from "@/execution/types";
+import {
+  targetOf,
+  type ExecEvent,
+  type ExecItem,
+  type ItemResult,
+  type Progress,
+  type Summary,
+} from "@/execution/types";
 import { canonical, type AuditEntry } from "../audit/audit";
 import { sha256 } from "../auth/crypto";
 import type { Db } from "../db/sql";
@@ -48,7 +55,11 @@ export class DbExecutionStore implements ExecutionStore {
    * Expiry is re-checked HERE, atomically with the claim (security review M2): the gates and drift guard before it can
    * take seconds on a slow broker, and a plan must never start sending after its 30 s.
    */
-  claim(planId: string, newExecutionId: string): Promise<{ executionId: string; created: boolean }> {
+  claim(
+    planId: string,
+    newExecutionId: string,
+    items: readonly ExecItem[] = [],
+  ): Promise<{ executionId: string; created: boolean }> {
     const now = new Date(this.#clock.now()).toISOString();
     return this.#db.tx(async (t) => {
       const won = await t.query(
@@ -61,6 +72,13 @@ export class DbExecutionStore implements ExecutionStore {
           planId,
           now,
         ]);
+        // Restart recovery: every item exists as "pending" from the moment the plan is claimed.
+        if (items.length > 0) {
+          await t.query(
+            "insert into execution_items (execution_id, idx, op, target_id, state) select $1, x.i - 1, x.op, x.target, 'pending' from unnest($2::text[], $3::text[]) with ordinality as x(op, target, i)",
+            [newExecutionId, items.map((i) => i.op), items.map(targetOf)],
+          );
+        }
         return { executionId: newExecutionId, created: true };
       }
       const [existing] = await t.query<{ id: string }>("select id from executions where plan_id = $1", [
@@ -70,24 +88,52 @@ export class DbExecutionStore implements ExecutionStore {
       return { executionId: existing.id, created: false };
     });
   }
+
+  /** Item `index` is about to be sent. Only a pending row moves: a result that already landed is never overwritten. */
+  async markSending(executionId: string, index: number): Promise<void> {
+    await this.#db.query(
+      "update execution_items set state = 'sending', updated_at = now() where execution_id = $1 and idx = $2 and state = 'pending'",
+      [executionId, index],
+    );
+  }
 }
 
+/** Starts with "not sent", so retry-failed picks it up. */
+export const NOT_SENT_RESTART = "not sent: the server restarted before it was sent";
+export const UNKNOWN_RESTART =
+  "the server restarted while sending: it may or may not have happened, check it in MT5";
+
 /**
- * Boot recovery: a run this process doesn't hold can't still be running. Mark it interrupted so status, history and
- * retry tell the truth (items with no result row are unknown: they may have been sent).
+ * A run no process holds anymore. One transaction: the run is interrupted, items never picked up are "not sent"
+ * (skipped, retryable), items caught mid-send are unknown (may have happened: never retried automatically).
  */
+export async function markInterrupted(db: Db, executionId: string): Promise<boolean> {
+  return db.tx(async (t) => {
+    const hit = await t.query(
+      "update executions set status = 'interrupted', finished_at = now() where id = $1 and status = 'running' returning id",
+      [executionId],
+    );
+    if (hit.length === 0) return false;
+    await t.query(
+      "update execution_items set state = 'skipped', message = $2, updated_at = now() where execution_id = $1 and state = 'pending'",
+      [executionId, NOT_SENT_RESTART],
+    );
+    await t.query(
+      "update execution_items set state = 'unknown', message = $2, updated_at = now() where execution_id = $1 and state = 'sending'",
+      [executionId, UNKNOWN_RESTART],
+    );
+    return true;
+  });
+}
+
+/** Boot recovery: a run this process doesn't hold can't still be running. */
 export async function recoverInterrupted(
   db: Db,
   isLive: (executionId: string) => boolean,
 ): Promise<string[]> {
   const rows = await db.query<{ id: string }>("select id from executions where status = 'running'");
   const stale = rows.map((r) => r.id).filter((id) => !isLive(id));
-  for (const id of stale) {
-    await db.query(
-      "update executions set status = 'interrupted', finished_at = now() where id = $1 and status = 'running'",
-      [id],
-    );
-  }
+  for (const id of stale) await markInterrupted(db, id);
   return stale;
 }
 

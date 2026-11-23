@@ -13,7 +13,13 @@ import { buildPlan, type PlanDraft } from "@/domain/plan";
 import { roundToTick } from "@/domain/price";
 import type { PlanItem, PositionFilter, Quote, SymbolSpec } from "@/domain/types";
 import type { Db } from "../db/sql";
-import { gates, persistResults, type ExecuteRefusal, type RecordComplete } from "./executions";
+import {
+  gates,
+  markInterrupted,
+  persistResults,
+  type ExecuteRefusal,
+  type RecordComplete,
+} from "./executions";
 import { loadPlan, storePlan, type PlanSummary } from "./plans";
 import type { TradingServices } from "./services";
 
@@ -136,9 +142,7 @@ export async function retryFailed(
       return { ok: false, code: "STILL_RUNNING", message: "Still running. Retry once it finishes." };
     }
     // Not running anywhere: cut off (restart, or its results couldn't be saved). Say so, don't block forever.
-    await db.query("update executions set status = 'interrupted', finished_at = now() where id = $1", [
-      executionId,
-    ]);
+    await markInterrupted(db, executionId);
   }
   const original = await loadPlan(db, userId, exec.plan_id);
   if (original === null) return { ok: false, code: "NOT_FOUND", message: "No such execution." };
@@ -151,7 +155,9 @@ export async function retryFailed(
   // position still without the level the owner asked for (QA review): it must not vanish as "nothing failed".
   const retryable = rows.filter(
     (r) =>
-      r.state === "failed" || (r.state === "skipped" && r.message.startsWith("aborted before it was sent")),
+      r.state === "failed" ||
+      (r.state === "skipped" &&
+        (r.message.startsWith("aborted before it was sent") || r.message.startsWith("not sent"))),
   );
   const failed = new Set(retryable.map((r) => `${r.op}|${r.target_id}`));
   const withRow = new Set(rows.map((r) => `${r.op}|${r.target_id}`));

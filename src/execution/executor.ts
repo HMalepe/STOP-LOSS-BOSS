@@ -38,6 +38,12 @@ export interface ExecuteDeps {
   readonly random?: () => number;
   /** "urgent" for close-now: served ahead of everything else in the shared limiter. */
   readonly priority?: Priority;
+  /**
+   * Restart recovery: durably record "about to send item `index`" before its first broker call, so a crash mid-batch
+   * can tell "never sent" from "maybe sent". Normal runs wait for it and refuse to send if it fails. Urgent runs
+   * (close-now: closes and cancels, safe to resend) never wait on it: bookkeeping must not slow a panic close.
+   */
+  readonly beforeSend?: (index: number, item: ExecItem) => Promise<void>;
 }
 
 export function execute(items: readonly ExecItem[], deps: ExecuteDeps): AsyncIterable<ExecEvent> {
@@ -78,6 +84,29 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
     else finish(blank(index, item, "skipped", `duplicate of item ${String(first)} in this plan: not sent`));
   }
 
+  const recordIntent = async (index: number, item: ExecItem): Promise<boolean> => {
+    const hook = deps.beforeSend;
+    if (hook === undefined) return true;
+    if (deps.priority === "urgent") {
+      hook(index, item).catch(() => undefined);
+      return true;
+    }
+    try {
+      await hook(index, item);
+      return true;
+    } catch (e) {
+      finish(
+        blank(
+          index,
+          item,
+          "failed",
+          `not sent: couldn't record the send first (${e instanceof Error ? e.message : String(e)})`,
+        ),
+      );
+      return false;
+    }
+  };
+
   const worker = async () => {
     for (;;) {
       if (deps.signal?.aborted === true) return;
@@ -86,6 +115,7 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
       if (item === undefined) return;
       next += 1;
       if (results[index] !== undefined) continue;
+      if (!(await recordIntent(index, item))) continue;
       // An item that has to wait on a slow/stuck request frees its worker (SRE review: otherwise a hung broker stalls
       // close-now for an hour). It finishes in the background; the run waits for it before completing.
       const freed = new Deferred();

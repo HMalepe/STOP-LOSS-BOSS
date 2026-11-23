@@ -360,3 +360,41 @@ describe("Phase 04 SRE review: streams, memory, urgency", () => {
     expect(await store.claim("a", "4")).toEqual({ executionId: "4", created: true });
   });
 });
+
+describe("restart recovery wiring", () => {
+  it("the store gets the items at claim and an intent per item before it is sent, tagged with the execution", async () => {
+    const { s, broker } = setup();
+    const log: string[] = [];
+    const inner = new InMemoryExecutionStore();
+    const runner = new InProcessRunner({
+      broker,
+      limiter: new CreditLimiter({ capacity: 5000, windowMs: 10_000, maxInFlight: 8, scheduler: s }),
+      scheduler: s,
+      concurrency: 1,
+      random: () => 0.5,
+      newId: () => "exR",
+      store: {
+        claim: (planId, id, items) => {
+          log.push(`claim ${planId} ${String(items.length)}`);
+          return inner.claim(planId, id);
+        },
+        markSending: (executionId, index) => {
+          log.push(`sending ${executionId} ${String(index)} (calls so far ${String(broker.calls.length)})`);
+          return Promise.resolve();
+        },
+      },
+    });
+    const id = broker.seedPosition({
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 0.1,
+      openPrice: 1.085,
+      sl: null,
+      tp: null,
+      magic: 0,
+    });
+    await runner.start("p", [{ op: "close", positionId: id, side: "BUY", volume: 0.1 }]);
+    await s.run(drain(runner.events("exR")));
+    expect(log).toEqual(["claim p 1", "sending exR 0 (calls so far 0)"]);
+  });
+});

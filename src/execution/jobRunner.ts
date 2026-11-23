@@ -84,7 +84,7 @@ export class InProcessRunner implements JobRunner {
   }
 
   async start(planId: string, items: readonly ExecItem[], opts: StartOptions = {}): Promise<StartResult> {
-    const claim = await this.#deps.store.claim(planId, (this.#deps.newId ?? randomUUID)());
+    const claim = await this.#deps.store.claim(planId, (this.#deps.newId ?? randomUUID)(), items);
     if (!claim.created) return { ok: false, code: "PLAN_ALREADY_EXECUTED", executionId: claim.executionId };
 
     if (opts.urgent === true) {
@@ -152,10 +152,14 @@ export class InProcessRunner implements JobRunner {
     urgent: boolean,
   ): Promise<void> {
     const onCall = this.#deps.onCall;
+    const store = this.#deps.store;
     const events = execute(items, {
       ...this.#deps,
       signal: exec.abort.signal,
       priority: urgent ? "urgent" : "normal",
+      ...(store.markSending === undefined
+        ? {}
+        : { beforeSend: (index: number) => store.markSending?.(executionId, index) ?? Promise.resolve() }),
       // Every log line says which execution it belongs to.
       ...(onCall === undefined
         ? {}
