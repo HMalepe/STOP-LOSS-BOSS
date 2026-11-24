@@ -23,14 +23,16 @@ The UI branch (`claude/determined-mccarthy-kgq7ml`) is merged in up to f2132c6; 
 - dbe8551 observability (call logs, counters, log alerts, /api/admin/metrics) + /api/health, /api/health/ready
 - 9078687 Phase 08 M1: `src/domain/entries.ts` buildMarketBatch (OD1), 100% branches
 - 4ee6165 Phase 08 M2: `buildLadder` (OD2) in the same file; new rule R5.6a in docs/03
+- 79efc1a M3a entries preview→execute (batch_seq migration 0004, R0.2, §7 re-check, no entry retries)
+- ccf92bc M3b risk to SL + margin (`src/domain/risk.ts`, `BrokerProvider.calculateMargin`, summary.risk)
 - Merge note: UI moved the DB singleton to globalThis; `startedDb()` now returns `shared.db`.
 
 ## Next session should start by
-1. M3 (next): wire market/ladder into preview/execute (remove from LATER_ACTIONS): batchSeq allocation for magic, R0.2 hedging,
-   R9.2 risk via `lossTickValue` (add to Quote/stream), R9.3 margin, R9.4 spread guard, caps from `effectiveCaps`,
-   ExecItem `market` from MarketEntryItem; boot reconcile of entries left `sending` by clientId (ADR-0009).
+1. M3c (next): R9.4 spread guard at execute (absolute SPREAD_MAX_POINTS + adaptive 3x rolling median of streamed
+   ticks over SPREAD_WINDOW_SEC; needs a tick buffer from the stream). Then boot reconcile of entries left `sending`
+   by clientId (ADR-0009). Owner decision pending: no-SL batches are refused by the risk cap.
 2. M4: presets CRUD. UI can use `/api/settings/caps`, `/api/admin/metrics`.
 
 ## State check
-- `pnpm verify`: green (928 passed, 1 skipped). Load: 0 duplicates.
+- `pnpm verify`: green (955 passed, 1 skipped). Load: 0 duplicates.
 - Uncommitted changes: none after this note.
