@@ -91,6 +91,9 @@ For price X and position p:
   Or step mode: every K points from A toward B; B is included only if it lands exactly on a step.
 - R5.5 Pending type must be consistent with price vs market: Buy Limit below ask, Buy Stop above ask, Sell Limit above bid, Sell Stop below bid, all at least `d` away. Invalid levels → reject plan, listing them.
 - R5.6 Per-level SL/TP given as offsets in points from the level price.
+- R5.6a A pending order's SL/TP are measured from its **own open price**, not the market: buy SL below / TP above the
+  level, sell the reverse, each at least `d` away (MT5 refuses a pending order whose stops sit inside the stops level of
+  its open price). Any level breaking this refuses the whole ladder, listing the levels (same as R5.5). Added in Phase 08 M2.
 
 ## §6 Retry policy (R6.x)
 [V] MT5 return codes (`ENUM_TRADE_RETURN_CODES`); these go into `src/broker/retcodes.ts` as the single table:
