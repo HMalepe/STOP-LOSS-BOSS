@@ -110,9 +110,7 @@ export function ProgressView({
                   <p className="num text-sm text-text">
                     #{it.targetId} <span className="text-muted">{it.op}</span>
                   </p>
-                  {it.outcome === "done" && it.message === "" ? null : (
-                    <p className="text-xs text-muted">{it.message}</p>
-                  )}
+                  {it.outcome === "done" ? null : <p className="text-xs text-muted">{it.message}</p>}
                 </div>
                 <span className="num shrink-0 text-xs text-faint">
                   {it.latencyMs} ms{it.attempts > 1 ? ` · ${String(it.attempts)}×` : ""}

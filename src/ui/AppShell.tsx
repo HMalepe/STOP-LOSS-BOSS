@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CommandPalette, PaletteButton } from "./CommandPalette";
 import { Wordmark } from "./Logo";
 import { ModeBadge, type Mode } from "./ModeBadge";
 import { BottomNav, SideNav } from "./NavLinks";
@@ -26,10 +27,12 @@ export function AppShell({
 }) {
   return (
     <div className="flex min-h-dvh">
+      <CommandPalette />
       <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col gap-6 border-r border-line bg-ink/60 px-3 py-4 lg:flex">
         <div className="px-1.5">
           <Wordmark />
         </div>
+        <PaletteButton />
         <SideNav />
         <div className="mt-auto flex flex-col items-start gap-2 px-1.5">
           <ModeBadge mode={mode} />

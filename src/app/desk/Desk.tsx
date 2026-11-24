@@ -1,5 +1,5 @@
 "use client";
-import { ChevronDown, Crosshair, PackagePlus } from "lucide-react";
+import { ArrowDownUp, ChevronDown, Crosshair, PackagePlus } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { api, type ApiError, type PlanSummary, type Position } from "@/ui/api";
 import { AppShell, Panel } from "@/ui/AppShell";
@@ -9,7 +9,16 @@ import { ConfirmSheet, type SheetPlan } from "@/ui/ConfirmSheet";
 import { Connection, type Link } from "@/ui/Connection";
 import { cx } from "@/ui/cx";
 import { HaltedBanner } from "@/ui/HaltedBanner";
-import { parsePrice, planSentence, signedMoney, spreadPoints, type Ask } from "@/ui/logic";
+import {
+  clockTime,
+  parsePrice,
+  planSentence,
+  signedMoney,
+  sortPositions,
+  spreadPoints,
+  type Ask,
+  type SortKey,
+} from "@/ui/logic";
 import { Metric } from "@/ui/Metric";
 import type { Mode } from "@/ui/ModeBadge";
 import { PriceInput } from "@/ui/PriceInput";
@@ -27,6 +36,12 @@ interface Pending {
   readonly plan: PlanSummary;
   readonly ask: Ask | null;
 }
+
+const SORT_LABEL: Record<SortKey, string> = {
+  loss: "Biggest loss first",
+  profit: "Biggest profit first",
+  ticket: "Oldest first",
+};
 
 const fmt = (n: number | null, digits: number) => (n === null ? "—" : n.toFixed(digits));
 
@@ -46,6 +61,7 @@ export function Desk({
   const [side, setSide] = useState<Side>("ALL");
   const [profitOnly, setProfitOnly] = useState(false);
   const [tab, setTab] = useState<Tab>("trigger");
+  const [sort, setSort] = useState<SortKey>("loss");
   const [trigger, setTrigger] = useState("");
   const [sl, setSl] = useState("");
   const [tp, setTp] = useState("");
@@ -70,8 +86,9 @@ export function Desk({
     () => [...new Set([...symbols, ...(state?.symbols.map((x) => x.symbol) ?? []), symbol])].sort(),
     [symbols, state, symbol],
   );
-  const shown = (positions ?? []).filter(
-    (p) => (side === "ALL" || p.side === side) && (!profitOnly || p.profit > 0),
+  const shown = sortPositions(
+    (positions ?? []).filter((p) => (side === "ALL" || p.side === side) && (!profitOnly || p.profit > 0)),
+    sort,
   );
 
   const filter = useMemo(
@@ -466,7 +483,24 @@ export function Desk({
 
       <Panel
         title="Open positions"
-        meta={positions === null ? "loading" : `${String(shown.length)} shown`}
+        meta={
+          positions === null || lastOk === null
+            ? "loading"
+            : `${String(shown.length)} shown · as of ${clockTime(lastOk)}`
+        }
+        actions={
+          <button
+            type="button"
+            onClick={() => {
+              setSort((k) => (k === "loss" ? "profit" : k === "profit" ? "ticket" : "loss"));
+            }}
+            aria-label={`Sorted by ${SORT_LABEL[sort]}. Change sort`}
+            className="flex h-8 items-center gap-1.5 rounded-sm px-2 text-xs text-muted transition-colors hover:bg-raised hover:text-text"
+          >
+            <ArrowDownUp aria-hidden className="size-3.5" />
+            {SORT_LABEL[sort]}
+          </button>
+        }
         flush
       >
         {positions === null ? (

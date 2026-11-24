@@ -1,6 +1,7 @@
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import type { ReactNode } from "react";
 import { cx } from "./cx";
+import { Help } from "./Help";
 
 /**
  * A labelled number. `trend` colours AND marks it (arrow + sign), so meaning survives colour blindness and greyscale.
@@ -26,8 +27,11 @@ export function Metric({
   const Icon =
     trend === "up" ? ArrowUpRight : trend === "down" ? ArrowDownRight : trend === "flat" ? Minus : null;
   return (
-    <div className="flex min-w-0 flex-col gap-1" title={hint}>
-      <dt className="eyebrow truncate">{label}</dt>
+    <div className="flex min-w-0 flex-col gap-1">
+      <dt className="eyebrow flex items-center gap-1.5">
+        <span className="truncate">{label}</span>
+        {hint === undefined ? null : <Help label={label}>{hint}</Help>}
+      </dt>
       <dd
         className={cx(
           "num flex items-baseline gap-1 leading-none",

@@ -70,3 +70,32 @@ describe("desk API client", () => {
     });
   });
 });
+
+describe("history, kill switch, sessions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  it("paths and bodies", async () => {
+    const f = vi.fn(() => Promise.resolve(new Response("{}", { status: 200 })));
+    vi.stubGlobal("fetch", f);
+    await api.history();
+    await api.history("2026-11-23T10:00:00.000Z|abc");
+    await api.killSwitch();
+    await api.setKillSwitch(true);
+    await api.reauth("123456");
+    await api.logout();
+    await api.revokeAll();
+    const paths = f.mock.calls.map((c) => (c as unknown as [string])[0]);
+    expect(paths).toEqual([
+      "/api/history",
+      "/api/history?cursor=2026-11-23T10%3A00%3A00.000Z%7Cabc",
+      "/api/admin/kill-switch",
+      "/api/admin/kill-switch",
+      "/api/auth/reauth",
+      "/api/auth/logout",
+      "/api/auth/sessions/revoke-all",
+    ]);
+    const body = (i: number) => (f.mock.calls[i] as unknown as [string, RequestInit])[1].body as string;
+    expect([JSON.parse(body(3)), JSON.parse(body(4))]).toEqual([{ halted: true }, { code: "123456" }]);
+  });
+});
