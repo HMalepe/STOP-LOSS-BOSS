@@ -22,7 +22,12 @@ import { makeRevalidator } from "@/execution/revalidate";
 import { realScheduler, type Scheduler } from "@/execution/scheduler";
 import { getDb, startedDb } from "../context";
 import type { Db } from "../db/sql";
-import { DbExecutionStore, markInterrupted, recoverInterrupted } from "./executions";
+import {
+  DbExecutionStore,
+  markInterrupted,
+  reconcileRestartedEntries,
+  recoverInterrupted,
+} from "./executions";
 import { shutdown, TaskTracker, type ShutdownOptions, type ShutdownReport } from "../shutdown";
 import { SpecCache } from "./specCache";
 import { SpreadMonitor } from "./spreadMonitor";
@@ -242,6 +247,8 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
     await recoverInterrupted(db, (id) => runner.status(id)?.state === "running"),
     "boot recovery",
   );
+  // ADR-0009: entries a restart caught mid-send are looked up in MT5 by clientId (found → done).
+  await reconcileRestartedEntries(db, broker);
   return {
     broker,
     specs: new SpecCache((s) => broker.getSymbolSpec(s), clock),

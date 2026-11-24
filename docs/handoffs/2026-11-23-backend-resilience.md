@@ -25,14 +25,15 @@ The UI branch (`claude/determined-mccarthy-kgq7ml`) is merged in up to f2132c6; 
 - 4ee6165 Phase 08 M2: `buildLadder` (OD2) in the same file; new rule R5.6a in docs/03
 - 79efc1a M3a entries preview→execute (batch_seq migration 0004, R0.2, §7 re-check, no entry retries)
 - ccf92bc M3b risk to SL + margin (`src/domain/risk.ts`, `BrokerProvider.calculateMargin`, summary.risk)
+- 8bbb627 M3c spread guard (`src/domain/spread.ts`, `SpreadMonitor`, 409 SPREAD_TOO_WIDE)
+- (this) restart reconcile of entries by clientId (`reconcileRestartedEntries`, run at boot)
 - Merge note: UI moved the DB singleton to globalThis; `startedDb()` now returns `shared.db`.
 
 ## Next session should start by
-1. M3c (next): R9.4 spread guard at execute (absolute SPREAD_MAX_POINTS + adaptive 3x rolling median of streamed
-   ticks over SPREAD_WINDOW_SEC; needs a tick buffer from the stream). Then boot reconcile of entries left `sending`
-   by clientId (ADR-0009). Owner decision pending: no-SL batches are refused by the risk cap.
+1. M4 (next): presets CRUD (OD3) + fire = fresh preview from the recipe (R9.6). Owner decision pending: no-SL
+   batches are refused by the risk cap.
 2. M4: presets CRUD. UI can use `/api/settings/caps`, `/api/admin/metrics`.
 
 ## State check
-- `pnpm verify`: green (955 passed, 1 skipped). Load: 0 duplicates.
+- `pnpm verify`: green (975 passed, 1 skipped). Load: 0 duplicates.
 - Uncommitted changes: none after this note.

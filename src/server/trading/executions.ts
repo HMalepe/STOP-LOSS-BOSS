@@ -11,7 +11,7 @@
  *   never sent, and reported in the response. The rest runs.
  * - Closed in the meantime: left in; the executor reports it per item (close-type items count it as done).
  */
-import { BrokerError, type AccountTradeMode } from "@/broker/BrokerProvider";
+import { BrokerError, type AccountTradeMode, type BrokerProvider } from "@/broker/BrokerProvider";
 import type { Clock } from "@/domain/clock";
 import { formatPrice, fromPoints, toPoints } from "@/domain/price";
 import { decideModify, marketFrom, quoteProblems } from "@/domain/rules";
@@ -125,6 +125,53 @@ export async function markInterrupted(db: Db, executionId: string): Promise<bool
     );
     return true;
   });
+}
+
+/** Messages of entries after a restart lookup. Not UNKNOWN_RESTART, so a second boot doesn't look them up again. */
+const FOUND = "found in MT5 after a restart";
+const NOT_FOUND =
+  "not found in MT5 after a restart: most likely never placed, but a late fill can't be ruled out. Check MT5 before re-firing.";
+const IN_FLIGHT = "still being processed by MT5 after a restart: check MT5 in a minute.";
+
+/**
+ * ADR-0009 after a restart: entries left "sending" (now unknown with UNKNOWN_RESTART) are looked up by clientId.
+ * Found as a position or pending order → done, with the ticket. Not found / in flight → stay unknown with a clearer
+ * message: "not found" seconds after a crash isn't proof it never landed, so it's never turned into "not sent".
+ * A broker that can't answer changes nothing. Never throws.
+ */
+export async function reconcileRestartedEntries(
+  db: Db,
+  broker: Pick<BrokerProvider, "reconcile">,
+): Promise<{ checked: number; found: number }> {
+  try {
+    const rows = await db.query<{ execution_id: string; idx: number; target_id: string }>(
+      "select execution_id, idx, target_id from execution_items where state = 'unknown' and op in ('market', 'pending') and message = $1",
+      [UNKNOWN_RESTART],
+    );
+    if (rows.length === 0) return { checked: 0, found: 0 };
+    const where = await broker.reconcile(rows.map((r) => r.target_id));
+    let found = 0;
+    for (const r of rows) {
+      const w = where.get(r.target_id);
+      if (w === undefined) continue;
+      const [state, message] =
+        w.status === "position"
+          ? ["done", `${FOUND}: position ${w.positionIds.join(", ")}`]
+          : w.status === "order"
+            ? ["done", `${FOUND}: order ${w.orderIds.join(", ")}`]
+            : w.status === "inFlight"
+              ? ["unknown", IN_FLIGHT]
+              : ["unknown", NOT_FOUND];
+      if (state === "done") found += 1;
+      await db.query(
+        "update execution_items set state = $3, message = $4, updated_at = now() where execution_id = $1 and idx = $2 and message = $5",
+        [r.execution_id, r.idx, state, message, UNKNOWN_RESTART],
+      );
+    }
+    return { checked: rows.length, found };
+  } catch {
+    return { checked: 0, found: 0 };
+  }
 }
 
 /** Boot recovery: a run this process doesn't hold can't still be running. */

@@ -18,7 +18,7 @@
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
 | 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
 | 07 | UI | 🟨 | Stage 1 ✅ design system + shell ("The Observatory", docs/12) · A ✅ trading controls · B ✅ sign-in · C ✅ live desk wired to the API. Next: History, Settings, PWA (M5) |
-| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | Backend: M1 ✅ domain market batch (OD1) · M2 ✅ domain ladder (OD2) · M3a ✅ entries preview→execute (batch seq, R0.2, §7 re-check) · M3b ✅ risk to SL + margin · M3c ✅ spread guard · M4 presets |
+| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | Backend: M1 ✅ domain market batch (OD1) · M2 ✅ domain ladder (OD2) · M3a ✅ entries preview→execute (batch seq, R0.2, §7 re-check) · M3b ✅ risk to SL + margin · M3c ✅ spread guard · ✅ restart reconcile of entries · M4 presets |
 | 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
 | 10 | Hardening and go-live | ⬜ | |
@@ -83,7 +83,7 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - ~~Wire the gates~~ done on execute (M3); close-now in M4.
 - ~~Restart recovery~~ done: pending rows at claim, "sending" before each send, boot recovery resolves leftovers.
 - ~~Re-auth for caps changes~~ done: `/api/settings/caps`.
-- ~~Persistence and restart recovery~~ done (except: entries still "sending" at boot → reconcile by clientId, lands with Phase 08 entries).
+- ~~Persistence and restart recovery~~ done (entries left "sending" are reconciled by clientId at boot since Phase 08).
 - ~~Graceful shutdown~~ done (docs/08: host kill timeout must be set, Fly default 5 s, Railway 0 s).
 - ~~Drift guard at execute~~ done in Phase 06 M3.
 - ~~Circuit breaker~~ done.

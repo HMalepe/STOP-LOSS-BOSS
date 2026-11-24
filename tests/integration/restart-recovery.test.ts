@@ -143,3 +143,69 @@ describe("boot recovery after a crash mid-batch", () => {
     expect(res.status).toBe(201);
   });
 });
+
+describe("after a restart: entries caught mid-send are looked up by clientId (ADR-0009)", () => {
+  it("found as a position or order → done (with the ticket); not found or in flight → stays unknown, said so", async () => {
+    const { reconcileRestartedEntries, UNKNOWN_RESTART } = await import("@/server/trading/executions");
+    const { broker } = mockServices(s.db, s.clock);
+    const plan = await preview();
+    await new DbExecutionStore(s.db, s.clock).claim(plan.id, EX, []);
+    const tag = { magic: 7_731_000_000_777, comment: "OD:lr" };
+    await broker.placeMarket({
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 0.01,
+      sl: 1.08,
+      tp: null,
+      ...tag,
+      clientId: "lr0",
+    });
+    await broker.placePending({
+      symbol: "EURUSD",
+      type: "BUY_LIMIT",
+      volume: 0.01,
+      openPrice: 1.08,
+      sl: 1.07,
+      tp: null,
+      ...tag,
+      clientId: "lr1",
+    });
+    broker.setInFlight("lr3", true);
+    const rows: [number, string, string][] = [
+      [0, "market", "lr0"],
+      [1, "pending", "lr1"],
+      [2, "market", "lr2"],
+      [3, "market", "lr3"],
+    ];
+    for (const [idx, op, target] of rows) {
+      await s.db.query(
+        "insert into execution_items (execution_id, idx, op, target_id, state, message) values ($1, $2, $3, $4, 'unknown', $5)",
+        [EX, idx, op, target, UNKNOWN_RESTART],
+      );
+    }
+
+    expect(await reconcileRestartedEntries(s.db, broker)).toEqual({ checked: 4, found: 2 });
+    const after = await items(EX);
+    expect(after.map((r) => r.state)).toEqual(["done", "done", "unknown", "unknown"]);
+    expect(after[0]?.message).toMatch(/^found in MT5 after a restart: position \d+/);
+    expect(after[1]?.message).toMatch(/^found in MT5 after a restart: order \d+/);
+    expect(after[2]?.message).toMatch(/not found in MT5 after a restart/);
+    expect(after[3]?.message).toMatch(/still being processed/);
+    // Idempotent: a second boot finds nothing new to check.
+    expect(await reconcileRestartedEntries(s.db, broker)).toEqual({ checked: 0, found: 0 });
+  });
+
+  it("a broker that can't answer changes nothing and never throws", async () => {
+    const { reconcileRestartedEntries, UNKNOWN_RESTART } = await import("@/server/trading/executions");
+    const { broker } = mockServices(s.db, s.clock);
+    const plan = await preview();
+    await new DbExecutionStore(s.db, s.clock).claim(plan.id, EX, []);
+    await s.db.query(
+      "insert into execution_items (execution_id, idx, op, target_id, state, message) values ($1, 0, 'market', 'z0', 'unknown', $2)",
+      [EX, UNKNOWN_RESTART],
+    );
+    broker.setConnected(false);
+    expect(await reconcileRestartedEntries(s.db, broker)).toEqual({ checked: 0, found: 0 });
+    expect((await items(EX))[0]?.message).toBe(UNKNOWN_RESTART);
+  });
+});
