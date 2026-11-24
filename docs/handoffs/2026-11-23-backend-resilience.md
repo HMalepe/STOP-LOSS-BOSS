@@ -22,15 +22,15 @@ The UI branch (`claude/determined-mccarthy-kgq7ml`) is merged in up to f2132c6; 
 ## Added later this session
 - dbe8551 observability (call logs, counters, log alerts, /api/admin/metrics) + /api/health, /api/health/ready
 - 9078687 Phase 08 M1: `src/domain/entries.ts` buildMarketBatch (OD1), 100% branches
+- 4ee6165 Phase 08 M2: `buildLadder` (OD2) in the same file; new rule R5.6a in docs/03
 - Merge note: UI moved the DB singleton to globalThis; `startedDb()` now returns `shared.db`.
 
 ## Next session should start by
-1. Phase 08 M2: ladder in `src/domain/entries.ts` (R5.4 levels + dedupe, R5.5 pending type vs market, R5.6 offsets, R9.5 scaled lots).
-2. M3: wire market/ladder into preview/execute (remove from LATER_ACTIONS): batchSeq allocation for magic, R0.2 hedging,
+1. M3 (next): wire market/ladder into preview/execute (remove from LATER_ACTIONS): batchSeq allocation for magic, R0.2 hedging,
    R9.2 risk via `lossTickValue` (add to Quote/stream), R9.3 margin, R9.4 spread guard, caps from `effectiveCaps`,
    ExecItem `market` from MarketEntryItem; boot reconcile of entries left `sending` by clientId (ADR-0009).
-3. M4: presets CRUD. UI can use `/api/settings/caps`, `/api/admin/metrics`.
+2. M4: presets CRUD. UI can use `/api/settings/caps`, `/api/admin/metrics`.
 
 ## State check
-- `pnpm verify`: green (912 passed, 1 skipped). Load: 0 duplicates.
+- `pnpm verify`: green (928 passed, 1 skipped). Load: 0 duplicates.
 - Uncommitted changes: none after this note.
