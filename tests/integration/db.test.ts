@@ -26,6 +26,7 @@ describe("migrations", () => {
       "0001_init.sql",
       "0002_security_hardening.sql",
       "0003_plan_summary.sql",
+      "0004_batch_seq.sql",
     ]);
   });
 

@@ -1022,6 +1022,201 @@
                     },
                     "required": ["action", "filter", "distancePoints"],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "market"
+                      },
+                      "symbol": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 32,
+                        "pattern": "^[A-Za-z0-9._#-]+$"
+                      },
+                      "side": {
+                        "type": "string",
+                        "enum": ["BUY", "SELL"]
+                      },
+                      "count": {
+                        "type": "number"
+                      },
+                      "volume": {
+                        "type": "number"
+                      },
+                      "stopLoss": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "points"
+                              },
+                              "value": {
+                                "type": "number"
+                              }
+                            },
+                            "required": ["kind", "value"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "price"
+                              },
+                              "value": {
+                                "type": "number"
+                              }
+                            },
+                            "required": ["kind", "value"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "takeProfit": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "points"
+                              },
+                              "value": {
+                                "type": "number"
+                              }
+                            },
+                            "required": ["kind", "value"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "price"
+                              },
+                              "value": {
+                                "type": "number"
+                              }
+                            },
+                            "required": ["kind", "value"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "required": ["action", "symbol", "side", "count", "volume"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "const": "ladder"
+                      },
+                      "symbol": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 32,
+                        "pattern": "^[A-Za-z0-9._#-]+$"
+                      },
+                      "side": {
+                        "type": "string",
+                        "enum": ["BUY", "SELL"]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": ["limit", "stop"]
+                      },
+                      "from": {
+                        "type": "number"
+                      },
+                      "to": {
+                        "type": "number"
+                      },
+                      "spacing": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "const": "count"
+                              },
+                              "levels": {
+                                "type": "number"
+                              }
+                            },
+                            "required": ["mode", "levels"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "const": "step"
+                              },
+                              "points": {
+                                "type": "number"
+                              }
+                            },
+                            "required": ["mode", "points"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "lots": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "const": "flat"
+                              },
+                              "lot": {
+                                "type": "number"
+                              }
+                            },
+                            "required": ["mode", "lot"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": "string",
+                                "const": "scaled"
+                              },
+                              "start": {
+                                "type": "number"
+                              },
+                              "end": {
+                                "type": "number"
+                              }
+                            },
+                            "required": ["mode", "start", "end"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "slOffsetPoints": {
+                        "type": "number"
+                      },
+                      "tpOffsetPoints": {
+                        "type": "number"
+                      }
+                    },
+                    "required": ["action", "symbol", "side", "kind", "from", "to", "spacing", "lots"],
+                    "additionalProperties": false
                   }
                 ]
               }

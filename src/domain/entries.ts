@@ -478,3 +478,39 @@ function ladderLots(l: LadderRequest["lots"], n: number, spec: SymbolSpec): numb
   }
   return out;
 }
+
+/**
+ * §7 for entries: re-check a stored entry against the market at execute time. Empty = still valid.
+ * Market orders: SL/TP vs the closing side (R5.3). Pending: placement vs the market (R5.5); its stops are relative to
+ * its own price (R5.6a) and can't have changed.
+ */
+export function entryProblems(item: MarketEntryItem | PendingEntryItem, m: Market): string[] {
+  if (item.op === "pending") {
+    if (
+      item.type !== "BUY_LIMIT" &&
+      item.type !== "BUY_STOP" &&
+      item.type !== "SELL_LIMIT" &&
+      item.type !== "SELL_STOP"
+    ) {
+      return [`${item.clientId}: unsupported order type ${item.type}`];
+    }
+    const problem = placementProblem(item.type, toPointsOnGrid(item.openPrice, m), m);
+    return problem === null ? [] : [`${formatPrice(item.openPrice, m.spec)}: ${problem}`];
+  }
+  return (
+    [
+      ["SL", item.sl],
+      ["TP", item.tp],
+    ] as const
+  ).flatMap(([kind, level]) => {
+    if (level === null) return [];
+    const v = checkLevel(item.side, kind, toPointsOnGrid(level, m), m);
+    return v === null
+      ? []
+      : [
+          `${kind} ${formatPrice(level, m.spec)} must now be ${v.relation} ${formatPrice(fromPoints(v.boundary, m.spec), m.spec)} (${v.rule})`,
+        ];
+  });
+}
+
+const toPointsOnGrid = (p: Price, m: Market): Points => roundToTickPoints(p, m.spec);

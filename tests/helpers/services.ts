@@ -29,6 +29,7 @@ export function mockServices(
       error: () => undefined,
     }),
     accountRef: null,
+    magicPrefix: 7731,
     capCeilings: { maxOrdersPerAction: 100, maxTotalLots: 5, maxRiskPct: 2, maxPositionsPerBatch: 1_000 },
     ...over,
   };

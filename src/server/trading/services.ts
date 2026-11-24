@@ -39,6 +39,8 @@ export interface TradingServices {
   readonly observability: Observability;
   /** Hard ceilings from the env (MAX_*). The owner's own caps (Settings) can only be at or below these. */
   readonly capCeilings: Caps;
+  /** R9.1 APP_MAGIC_PREFIX: every Order Desk batch's magic is prefix × 10^9 + seq. */
+  readonly magicPrefix: number;
   /** The MetaApi account id (the accounts row whose live_enabled counts). null in mock mode. */
   readonly accountRef: string | null;
 }
@@ -246,6 +248,7 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
     background: new TaskTracker(),
     observability,
     capCeilings: capsFromEnv(env),
+    magicPrefix: env.APP_MAGIC_PREFIX,
     accountRef: env.TRADING_MODE === "mock" ? null : (env.METAAPI_ACCOUNT_ID ?? null),
   };
 }

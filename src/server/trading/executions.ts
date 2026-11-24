@@ -16,6 +16,7 @@ import type { Clock } from "@/domain/clock";
 import { formatPrice, fromPoints, toPoints } from "@/domain/price";
 import { decideModify, marketFrom, quoteProblems } from "@/domain/rules";
 import type { PlanItem, Skipped } from "@/domain/types";
+import { entryProblems, type MarketEntryItem, type PendingEntryItem } from "@/domain/entries";
 import type { ExecutionStore } from "@/execution/idempotency";
 import type { JobRunner } from "@/execution/jobRunner";
 import {
@@ -31,7 +32,7 @@ import { sha256 } from "../auth/crypto";
 import type { Db } from "../db/sql";
 import { killSwitchState, tradingGate, type TradingAction } from "../killSwitch";
 import { tradingModeGate } from "../tradingMode";
-import { itemsHash, MAX_QUOTE_AGE_MS, type StoredPlan } from "./plans";
+import { itemsHash, MAX_QUOTE_AGE_MS, type StoredItem, type StoredPlan } from "./plans";
 import type { TradingServices } from "./services";
 
 /** Non-negotiable 7 in the database: flipping the plan and inserting its execution happen together, once. */
@@ -191,14 +192,71 @@ export async function gates(
 }
 
 type Modify = Extract<PlanItem, { op: "modify" }>;
+type Entry = MarketEntryItem | PendingEntryItem;
+const isEntry = (i: StoredItem): i is Entry => i.op === "market" || i.op === "pending";
 
-/** §7. Returns the items to run, the ones skipped up front (R7.1), or why the plan can't run at all. */
-export async function driftGuard(
+/** A stored item as the executor runs it. Entries carry their full broker request, tag included (R9.1). */
+export function toExecItem(i: StoredItem): ExecItem {
+  if (i.op === "market") {
+    const { symbol, side, volume, sl, tp, magic, comment, clientId } = i;
+    return { op: "market", req: { symbol, side, volume, sl, tp, magic, comment, clientId } };
+  }
+  if (i.op === "pending") {
+    const { symbol, type, volume, openPrice, sl, tp, magic, comment, clientId } = i;
+    return { op: "pending", req: { symbol, type, volume, openPrice, sl, tp, magic, comment, clientId } };
+  }
+  return i;
+}
+
+type Guarded = { ok: true; run: ExecItem[]; skipped: Skipped[] } | { ok: false; refusal: ExecuteRefusal };
+
+/** Fresh quote and spec for a §7 check. The broker may have widened stops since the preview: never a cached spec. */
+async function freshMarket(svc: TradingServices, symbol: string) {
+  svc.specs.invalidate(symbol);
+  const [quote, spec] = await Promise.all([svc.broker.getQuote(symbol), svc.specs.get(symbol)]);
+  if (quoteProblems(quote).length > 0) {
+    throw new BrokerError("BAD_DATA", `unusable quote for ${symbol}: ${quoteProblems(quote).join(", ")}`);
+  }
+  return { quote, spec };
+}
+
+const STALE: ExecuteRefusal = {
+  code: "PRICE_STALE",
+  message: "The last price is too old to check against. Nothing was sent.",
+};
+
+/**
+ * §7 for entries: fresh quote (R7.2), then EVERY entry re-checked against the market now. Any one no longer valid
+ * refuses the whole batch with zero broker calls: never half a ladder, never an entry whose stop would be refused.
+ */
+async function entryGuard(
   svc: TradingServices,
   plan: StoredPlan,
-): Promise<{ ok: true; run: PlanItem[]; skipped: Skipped[] } | { ok: false; refusal: ExecuteRefusal }> {
+  entries: readonly Entry[],
+): Promise<Guarded> {
+  const { quote, spec } = await freshMarket(svc, plan.summary.symbol);
+  if (svc.clock.now() - quote.time > MAX_QUOTE_AGE_MS) return { ok: false, refusal: STALE };
+  const m = marketFrom(spec, quote);
+  const moved = entries.flatMap((e) => entryProblems(e, m).map((reason) => ({ id: e.clientId, reason })));
+  if (moved.length > 0) {
+    return {
+      ok: false,
+      refusal: {
+        code: "PRICE_MOVED",
+        message: `Price moved: ${String(new Set(moved.map((x) => x.id)).size)} of ${String(entries.length)} orders are no longer valid. Nothing was sent. Preview again.`,
+        details: moved,
+      },
+    };
+  }
+  return { ok: true, run: plan.items.map(toExecItem), skipped: [] };
+}
+
+/** §7. Returns the items to run, the ones skipped up front (R7.1), or why the plan can't run at all. */
+export async function driftGuard(svc: TradingServices, plan: StoredPlan): Promise<Guarded> {
+  const entries = plan.items.filter(isEntry);
+  if (entries.length > 0) return entryGuard(svc, plan, entries);
   const modifies = plan.items.filter((i): i is Modify => i.op === "modify");
-  if (modifies.length === 0) return { ok: true, run: [...plan.items], skipped: [] };
+  if (modifies.length === 0) return { ok: true, run: plan.items.map(toExecItem), skipped: [] };
   const symbol = plan.summary.symbol;
   // The broker may have widened stops/freeze levels since the preview (news): never check against a cached spec here.
   svc.specs.invalidate(symbol);
@@ -270,7 +328,7 @@ export async function driftGuard(
       },
     };
   }
-  return { ok: true, run, skipped };
+  return { ok: true, run: run.map(toExecItem), skipped };
 }
 
 /** Nothing was claimed: the same plan can be executed again in a few seconds, on the new instance. */

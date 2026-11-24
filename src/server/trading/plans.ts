@@ -8,6 +8,13 @@ import { randomUUID } from "node:crypto";
 import { effectiveCaps } from "../caps";
 import { z } from "zod";
 import { buildPlan, type PlanDraft, type PlanError, type PlanRequest } from "@/domain/plan";
+import {
+  buildLadder,
+  buildMarketBatch,
+  type BatchIdentity,
+  type MarketEntryItem,
+  type PendingEntryItem,
+} from "@/domain/entries";
 import type { PlanItem, Position, Skipped } from "@/domain/types";
 import { canonical } from "../audit/audit";
 import { sha256 } from "../auth/crypto";
@@ -28,6 +35,12 @@ const SYMBOL = z
 const PRICE = z.number().positive();
 const POINTS = z.number().int().nonnegative().max(1_000_000);
 
+const SIDE = z.enum(["BUY", "SELL"]);
+const ENTRY_LEVEL = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("points"), value: z.number() }),
+  z.strictObject({ kind: z.literal("price"), value: z.number() }),
+]);
+
 const filter = z.strictObject({
   symbol: SYMBOL,
   side: z.enum(["ALL", "BUY", "SELL"]),
@@ -46,13 +59,53 @@ export const planBody = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("closeAt"), filter, price: PRICE }),
   z.strictObject({ action: z.literal("breakeven"), filter, offsetPoints: POINTS }),
   z.strictObject({ action: z.literal("lock"), filter, distancePoints: POINTS.min(1) }),
+  // Order Desk (Phase 08). Values are range-checked by the domain builder (R0.6), which says what's wrong in words.
+  z.strictObject({
+    action: z.literal("market"),
+    symbol: SYMBOL,
+    side: SIDE,
+    count: z.number(),
+    volume: z.number(),
+    stopLoss: ENTRY_LEVEL.optional(),
+    takeProfit: ENTRY_LEVEL.optional(),
+  }),
+  z.strictObject({
+    action: z.literal("ladder"),
+    symbol: SYMBOL,
+    side: SIDE,
+    kind: z.enum(["limit", "stop"]),
+    from: z.number(),
+    to: z.number(),
+    spacing: z.discriminatedUnion("mode", [
+      z.strictObject({ mode: z.literal("count"), levels: z.number() }),
+      z.strictObject({ mode: z.literal("step"), points: z.number() }),
+    ]),
+    lots: z.discriminatedUnion("mode", [
+      z.strictObject({ mode: z.literal("flat"), lot: z.number() }),
+      z.strictObject({ mode: z.literal("scaled"), start: z.number(), end: z.number() }),
+    ]),
+    slOffsetPoints: z.number().optional(),
+    tpOffsetPoints: z.number().optional(),
+  }),
 ]);
 export type PlanBody = z.infer<typeof planBody>;
-export const LATER_ACTIONS = new Set(["market", "ladder", "cancel"]);
+export const LATER_ACTIONS = new Set(["cancel"]);
+export type EntryBody = Extract<PlanBody, { action: "market" | "ladder" }>;
+export type ManageBody = Exclude<PlanBody, EntryBody>;
+
+/** What a stored plan can hold: management items, or Order Desk entries. */
+export type StoredItem = PlanItem | MarketEntryItem | PendingEntryItem;
+export type StoredAction = PlanDraft["action"] | "market" | "ladder";
+
+/** Anything storePlan can record. PlanDraft for management; entries build one of these directly. */
+export interface StorableDraft extends Omit<PlanDraft, "action" | "items"> {
+  readonly action: StoredAction;
+  readonly items: readonly StoredItem[];
+}
 
 export interface PlanSummary {
   readonly id: string;
-  readonly action: PlanDraft["action"];
+  readonly action: StoredAction;
   readonly symbol: string;
   readonly expiresAt: string;
   readonly quote: { readonly bid: number; readonly ask: number; readonly time: string } | null;
@@ -71,7 +124,7 @@ export type CreatePlanResult =
     };
 
 /** Strip `undefined` optionals so the domain type (exactOptionalPropertyTypes) is met exactly. */
-function toRequest(body: PlanBody): PlanRequest {
+function toRequest(body: ManageBody): PlanRequest {
   const f = {
     symbol: body.filter.symbol,
     side: body.filter.side,
@@ -96,7 +149,7 @@ function toRequest(body: PlanBody): PlanRequest {
 }
 
 /** What execute checks against: the exact broker calls, in order. */
-export function itemsHash(items: readonly PlanItem[]): string {
+export function itemsHash(items: readonly StoredItem[]): string {
   return sha256(canonical(items));
 }
 
@@ -110,6 +163,9 @@ export async function createPlan(
   /** Writes the audit row in the same transaction as the plan. */
   record: (tx: Db, summary: PlanSummary) => Promise<unknown>,
 ): Promise<CreatePlanResult> {
+  if (body.action === "market" || body.action === "ladder") {
+    return createEntryPlan(svc, db, userId, body, record);
+  }
   const req = toRequest(body);
   const symbol = req.filter.symbol;
   const [positions, orders, quote, spec] = await Promise.all([
@@ -154,14 +210,22 @@ export async function storePlan(
   svc: Pick<TradingServices, "clock" | "mode">,
   db: Db,
   userId: string,
-  plan: PlanDraft,
+  plan: StorableDraft,
   params: unknown,
   positions: readonly Position[],
   record: (tx: Db, summary: PlanSummary) => Promise<unknown>,
 ): Promise<PlanSummary> {
   const now = svc.clock.now();
   const byId = new Map(positions.map((p) => [p.id, p.volume]));
-  const lots = plan.items.reduce((a, i) => (i.op === "close" ? a + (byId.get(i.positionId) ?? 0) : a), 0);
+  const lots = plan.items.reduce(
+    (a, i) =>
+      i.op === "close"
+        ? a + (byId.get(i.positionId) ?? 0)
+        : i.op === "market" || i.op === "pending"
+          ? a + i.volume
+          : a,
+    0,
+  );
   const id = randomUUID();
   const expiresAt = new Date(now + PLAN_TTL_MS).toISOString();
   const summary: PlanSummary = {
@@ -208,7 +272,7 @@ export interface StoredPlan {
   readonly id: string;
   readonly status: "created" | "executing" | "executed" | "expired";
   readonly summary: PlanSummary;
-  readonly items: readonly PlanItem[];
+  readonly items: readonly StoredItem[];
   readonly inputHash: string;
   readonly expiresAt: number;
 }
@@ -219,7 +283,7 @@ export async function loadPlan(db: Db, userId: string, id: string): Promise<Stor
     id: string;
     status: StoredPlan["status"];
     summary: PlanSummary;
-    items: PlanItem[];
+    items: StoredItem[];
     input_hash: string;
     expires_at: Date | string;
   }>("select id, status, summary, items, input_hash, expires_at from plans where id = $1 and user_id = $2", [
@@ -235,4 +299,103 @@ export async function loadPlan(db: Db, userId: string, id: string): Promise<Stor
     inputHash: row.input_hash,
     expiresAt: (row.expires_at instanceof Date ? row.expires_at : new Date(row.expires_at)).getTime(),
   };
+}
+
+/** R9.1: one fresh batch per preview. magic = prefix × 10^9 + seq; the short tag is seq in base 36 (≤ 6 chars). */
+export async function allocateBatch(db: Db, prefix: number): Promise<BatchIdentity> {
+  const [row] = await db.query<{ seq: string | number }>("select nextval('batch_seq') as seq");
+  const seq = Number(row?.seq);
+  if (!Number.isSafeInteger(seq) || seq < 1) throw new Error("batch sequence returned no value");
+  const short = seq.toString(36);
+  return { magic: prefix * 1_000_000_000 + seq, batchShort: short, planShort: short };
+}
+
+const ENTRIES_NEED_HEDGING =
+  "Order Desk entries need a hedging account: on a netting account N orders would merge into one position (R0.2).";
+
+/**
+ * OD1 / OD2 preview. Checks in order, all before anything is stored: hedging account (R0.2), fresh quote (R7.2), the
+ * domain build (R5.x, R9.1, caps from Settings). The batch number is only taken once the request is otherwise valid.
+ */
+async function createEntryPlan(
+  svc: TradingServices,
+  db: Db,
+  userId: string,
+  body: EntryBody,
+  record: (tx: Db, summary: PlanSummary) => Promise<unknown>,
+): Promise<CreatePlanResult> {
+  const [account, quote, spec] = await Promise.all([
+    svc.broker.getAccount(),
+    svc.broker.getQuote(body.symbol),
+    svc.specs.get(body.symbol),
+  ]);
+  if (account.marginMode !== "HEDGING") {
+    return { ok: false, error: { code: "PLAN_INVALID", message: ENTRIES_NEED_HEDGING, details: [] } };
+  }
+  if (svc.clock.now() - quote.time > MAX_QUOTE_AGE_MS) {
+    return {
+      ok: false,
+      error: {
+        code: "PRICE_STALE",
+        message: "The last price is too old to fire against (market closed or feed lagging). Try again.",
+      },
+    };
+  }
+  const caps = await effectiveCaps(db, svc.capCeilings);
+  const id = await allocateBatch(db, svc.magicPrefix);
+  const built =
+    body.action === "market"
+      ? buildMarketBatch(
+          {
+            symbol: body.symbol,
+            side: body.side,
+            count: body.count,
+            volume: body.volume,
+            stopLoss: body.stopLoss,
+            takeProfit: body.takeProfit,
+          },
+          { spec, quote },
+          id,
+          caps,
+        )
+      : buildLadder(
+          {
+            symbol: body.symbol,
+            side: body.side,
+            kind: body.kind,
+            from: body.from,
+            to: body.to,
+            spacing: body.spacing,
+            lots: body.lots,
+            slOffsetPoints: body.slOffsetPoints,
+            tpOffsetPoints: body.tpOffsetPoints,
+          },
+          { spec, quote },
+          id,
+          caps,
+        );
+  if (!built.ok) {
+    const e = built.error;
+    return { ok: false, error: e.code === "PLAN_INVALID" ? { ...e, details: [] } : e };
+  }
+  const p = built.plan;
+  const draft: StorableDraft = {
+    action: body.action,
+    symbol: p.symbol,
+    quote: p.quote,
+    items: p.items,
+    skipped: [],
+    breakdown: { buys: p.side === "BUY" ? p.items.length : 0, sells: p.side === "SELL" ? p.items.length : 0 },
+    warnings: p.warnings,
+  };
+  const summary = await storePlan(
+    svc,
+    db,
+    userId,
+    draft,
+    { ...body, batch: { magic: id.magic, tag: id.batchShort } },
+    [],
+    record,
+  );
+  return { ok: true, summary };
 }

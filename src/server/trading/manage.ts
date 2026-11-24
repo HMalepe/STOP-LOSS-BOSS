@@ -9,7 +9,7 @@
  * check manually). It goes through the normal execute path, so the drift guard and every gate apply again.
  */
 import { z } from "zod";
-import { buildPlan, type PlanDraft } from "@/domain/plan";
+import { buildPlan } from "@/domain/plan";
 import { roundToTick } from "@/domain/price";
 import type { PlanItem, PositionFilter, Quote, SymbolSpec } from "@/domain/types";
 import type { Unreadable } from "@/broker/BrokerProvider";
@@ -22,7 +22,7 @@ import {
   type ExecuteRefusal,
   type RecordComplete,
 } from "./executions";
-import { loadPlan, storePlan, type PlanSummary } from "./plans";
+import { loadPlan, storePlan, type PlanSummary, type StorableDraft, type StoredItem } from "./plans";
 import type { TradingServices } from "./services";
 
 const SYMBOL = z
@@ -164,6 +164,7 @@ export type RetryResult =
       readonly message: string;
     };
 
+const isManageItem = (i: StoredItem): i is PlanItem => i.op !== "market" && i.op !== "pending";
 const targetOfItem = (i: PlanItem) => (i.op === "cancel" ? i.orderId : i.positionId);
 
 export async function retryFailed(
@@ -188,8 +189,18 @@ export async function retryFailed(
     // Not running anywhere: cut off (restart, or its results couldn't be saved). Say so, don't block forever.
     await markInterrupted(db, executionId);
   }
-  const original = await loadPlan(db, userId, exec.plan_id);
-  if (original === null) return { ok: false, code: "NOT_FOUND", message: "No such execution." };
+  const loaded = await loadPlan(db, userId, exec.plan_id);
+  if (loaded === null) return { ok: false, code: "NOT_FOUND", message: "No such execution." };
+  // Entries are never re-sent from here: a "failed" market order can sit next to ones that filled, and re-firing the
+  // batch's clientIds would confuse reconciliation (ADR-0009). Check what filled, then preview a fresh batch.
+  if (loaded.summary.action === "market" || loaded.summary.action === "ladder") {
+    return {
+      ok: false,
+      code: "NOTHING_TO_RETRY",
+      message: "Entries aren't retried automatically. Check what filled, then preview a new batch.",
+    };
+  }
+  const original = { ...loaded, items: loaded.items.filter(isManageItem) };
 
   const rows = await db.query<{ op: string; target_id: string; state: string; message: string }>(
     "select op, target_id, state, coalesce(message, '') as message from execution_items where execution_id = $1",
@@ -227,7 +238,7 @@ export async function retryFailed(
     optional<SymbolSpec>(svc.specs.get(symbol)),
   ]);
   const sides = items.flatMap((i) => (i.op === "cancel" ? [] : [i.side]));
-  const draft: PlanDraft = {
+  const draft: StorableDraft = {
     action: original.summary.action,
     symbol,
     quote:

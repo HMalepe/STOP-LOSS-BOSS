@@ -215,3 +215,28 @@ describe("OD2 pending ladder", () => {
     );
   });
 });
+
+describe("entryProblems: execute re-checks every stored entry against the market NOW (§7 for entries)", () => {
+  it("valid at preview, still valid → no problem; market moved through a market SL or a pending level → named", async () => {
+    const { entryProblems } = await import("@/domain/entries");
+    const { marketFrom } = await import("@/domain/rules");
+    const p = ok(build());
+    const m = marketFrom(EURUSD, Q);
+    expect(p.items.flatMap((i) => entryProblems(i, m))).toEqual([]);
+    // Ask falls to 1.0849: the 1.0850 buy limit is now ABOVE the ask.
+    const crashed = marketFrom(EURUSD, quote(1.0848, 1.0849));
+    expect(entryProblems(p.items[0]!, crashed)[0]).toMatch(/buy limit/);
+    const { buildMarketBatch } = await import("@/domain/entries");
+    const mb = buildMarketBatch(
+      { symbol: "EURUSD", side: "BUY", count: 1, volume: 0.1, stopLoss: { kind: "points", value: 150 } },
+      { spec: EURUSD, quote: Q },
+      ID,
+      CAPS,
+    );
+    if (!mb.ok) throw new Error("setup");
+    const entry = mb.plan.items[0]!;
+    expect(entryProblems(entry, m)).toEqual([]);
+    // Bid drops to the SL: a buy SL must be below the bid.
+    expect(entryProblems(entry, marketFrom(EURUSD, quote(1.0845, 1.0846)))[0]).toMatch(/SL/);
+  });
+});
