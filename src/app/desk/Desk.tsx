@@ -1,6 +1,6 @@
 "use client";
 import { ArrowDownUp, ChevronDown, Crosshair, PackagePlus } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ApiError, type PlanSummary, type Position } from "@/ui/api";
 import { AppShell, Panel } from "@/ui/AppShell";
 import { ArmButton } from "@/ui/ArmButton";
@@ -39,9 +39,9 @@ interface Pending {
 }
 
 const SORT_LABEL: Record<SortKey, string> = {
-  loss: "Biggest loss first",
-  profit: "Biggest profit first",
-  ticket: "Oldest first",
+  loss: "Most loss",
+  profit: "Most profit",
+  ticket: "Oldest",
 };
 
 const fmt = (n: number | null, digits: number) => (n === null ? "—" : n.toFixed(digits));
@@ -75,6 +75,15 @@ export function Desk({
   const [executing, setExecuting] = useState(false);
   const [run, setRun] = useState<{ id: string; total: number } | null>(null);
   const live = useRun(run?.id ?? null, run?.total ?? 0);
+  // Results and refusals appear where the eye is, never below the fold or under the dock (design review).
+  const progressRef = useRef<HTMLDivElement>(null);
+  const problemRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (run !== null) progressRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [run]);
+  useEffect(() => {
+    if (problem !== null) problemRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [problem]);
 
   const focus = state?.focus?.symbol === symbol ? state.focus : undefined;
   const digits = focus?.spec.digits ?? 2;
@@ -218,8 +227,8 @@ export function Desk({
           breakdown: [
             { label: "Positions", value: String(pending.plan.count) },
             {
-              label: "Buys · sells",
-              value: `${String(pending.plan.breakdown.buys)} · ${String(pending.plan.breakdown.sells)}`,
+              label: "Sides",
+              value: `${String(pending.plan.breakdown.buys)} buys · ${String(pending.plan.breakdown.sells)} sells`,
             },
             ...(pending.plan.breakdown.asTP === undefined
               ? []
@@ -293,7 +302,7 @@ export function Desk({
       bottom={
         <ArmButton
           label={count === 0 ? `Nothing open on ${symbol}` : "Close all now"}
-          armedLabel={`Tap again to close ${String(count)}`}
+          armedLabel={`Tap again: close all ${String(count)} ${symbol}`}
           onFire={() => void closeAll()}
           disabled={count === 0 && (summary?.orders ?? 0) === 0}
         />
@@ -344,16 +353,18 @@ export function Desk({
       </Panel>
 
       {pending === null && run !== null ? (
-        <ProgressView
-          progress={live.progress}
-          finished={live.finished}
-          items={live.items}
-          onRetry={() => void retry()}
-          onDone={() => {
-            setRun(null);
-            void refresh();
-          }}
-        />
+        <div ref={progressRef} className="scroll-mt-20">
+          <ProgressView
+            progress={live.progress}
+            finished={live.finished}
+            items={live.items}
+            onRetry={() => void retry()}
+            onDone={() => {
+              setRun(null);
+              void refresh();
+            }}
+          />
+        </div>
       ) : null}
 
       <div className="flex flex-col gap-3">
@@ -488,14 +499,16 @@ export function Desk({
         )}
       </Panel>
 
-      {problem === null ? null : <ProblemBox problem={problem} />}
+      {problem === null ? null : (
+        <div ref={problemRef}>
+          <ProblemBox problem={problem} />
+        </div>
+      )}
 
       <Panel
-        title="Open positions"
+        title="Positions"
         meta={
-          positions === null || lastOk === null
-            ? "loading"
-            : `${String(shown.length)} shown · as of ${clockTime(lastOk)}`
+          positions === null || lastOk === null ? "loading" : `${String(shown.length)} · ${clockTime(lastOk)}`
         }
         actions={
           <button
@@ -590,6 +603,8 @@ function HelperRow(p: {
 function ProblemBox({ problem }: { readonly problem: ApiError }) {
   const list = Array.isArray(problem.details)
     ? (problem.details as { message?: string; reason?: string; id?: string }[])
+        // Don't repeat what the headline already says.
+        .filter((d) => d.message === undefined || !problem.message.includes(d.message))
         .map((d) => (d.id === undefined ? "" : `#${d.id}: `) + (d.message ?? d.reason ?? ""))
         .filter((x) => x !== "")
     : [];

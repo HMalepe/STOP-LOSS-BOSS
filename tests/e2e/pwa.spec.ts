@@ -39,5 +39,7 @@ test("offline: a dead connection shows the offline page, not a browser error", a
   await page.goto("/login").catch(() => undefined);
   await expect(page.getByRole("heading", { name: "You're offline" })).toBeVisible();
   await expect(page.getByText("Nothing is sent while you're offline.")).toBeVisible();
+  // Styled even offline: its stylesheet comes from the cache (dark background, not the browser default white).
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(10, 13, 17)");
   await context.setOffline(false);
 });

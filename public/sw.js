@@ -5,7 +5,7 @@
  * - Hashed build assets (/_next/static) are immutable: cache-first.
  * - Page navigations go to the network; if that fails, the offline page explains what's going on.
  */
-const SHELL = "od-shell-v1";
+const SHELL = "od-shell-v2";
 const OFFLINE = ["/offline.html", "/offline.css", "/icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -33,6 +33,11 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/")) return; // live data only, never from a cache
 
+  // The offline page's own files: from the cache, so the offline page is styled when it's needed most.
+  if (OFFLINE.includes(url.pathname)) {
+    e.respondWith(caches.match(req).then((hit) => hit ?? fetch(req)));
+    return;
+  }
   if (url.pathname.startsWith("/_next/static/")) {
     e.respondWith(
       caches.open(SHELL).then(async (c) => {

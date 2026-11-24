@@ -35,7 +35,7 @@ test("the desk: live book, SL/TP preview → confirm → progress → done, then
 
   // Close All Now: arm, then fire.
   await page.getByRole("button", { name: "Close all now" }).click();
-  await page.getByRole("button", { name: "Tap again to close 5" }).click();
+  await page.getByRole("button", { name: "Tap again: close all 5 XAUUSD" }).click();
   await expect(page.getByRole("status").filter({ hasText: /All 6 done/ })).toBeVisible();
   await expect(page.getByText("Nothing open on XAUUSD").first()).toBeVisible();
 
