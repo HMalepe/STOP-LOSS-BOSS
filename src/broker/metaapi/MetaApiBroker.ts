@@ -17,6 +17,7 @@ import {
   type Reconciled,
   type TradeResult,
   type Lenient,
+  type MarginQuery,
 } from "../BrokerProvider";
 import { reconcileFrom } from "../reconcile";
 import { classify, codeName, LOCAL_CODE, RETCODE, type BrokerOp } from "../retcodes";
@@ -25,6 +26,7 @@ import {
   metaApiInFlight,
   metaApiOrder,
   metaApiPosition,
+  metaApiMargin,
   metaApiPrice,
   metaApiSpec,
   parseList,
@@ -172,6 +174,29 @@ export class MetaApiBroker implements BrokerProvider {
       }
       return parseOne(metaApiSpec, raw, "spec");
     });
+  }
+
+  /**
+   * R9.3. Any failure (timeout, SDK error, no value) is null: the caller blocks with "can't verify margin". Bounded by
+   * the read timeout, like every read.
+   */
+  async calculateMargin(o: MarginQuery): Promise<number | null> {
+    this.#assertReady();
+    try {
+      const raw = await withTimeout(
+        this.#conn.calculateMargin({
+          symbol: o.symbol,
+          type: o.side === "BUY" ? "ORDER_TYPE_BUY" : "ORDER_TYPE_SELL",
+          volume: o.volume,
+          openPrice: o.openPrice,
+        }),
+        this.#readTimeoutMs,
+      );
+      const m = parseOne(metaApiMargin, raw, "margin");
+      return m !== null && Number.isFinite(m) && m >= 0 ? m : null;
+    } catch {
+      return null;
+    }
   }
 
   async getQuote(symbol: string): Promise<Quote> {

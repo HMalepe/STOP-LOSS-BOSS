@@ -152,8 +152,24 @@ export const metaApiSpec = z
   }));
 
 export const metaApiPrice = z
-  .object({ symbol: z.string().min(1), bid: z.number(), ask: z.number(), time })
-  .transform((q): Quote => ({ symbol: q.symbol, bid: q.bid, ask: q.ask, time: q.time }));
+  .object({
+    symbol: z.string().min(1),
+    bid: z.number(),
+    ask: z.number(),
+    time,
+    // R9.2 (verified in the SDK's price model). Optional: absent → risk not computed, never guessed.
+    lossTickValue: z.number().optional(),
+  })
+  .transform((q): Quote => ({
+    symbol: q.symbol,
+    bid: q.bid,
+    ask: q.ask,
+    time: q.time,
+    ...(q.lossTickValue === undefined ? {} : { lossTickValue: q.lossTickValue }),
+  }));
+
+/** R9.3: MetaApi `Margin`. `margin` is undefined when the broker can't calculate it. */
+export const metaApiMargin = z.object({ margin: z.number().optional() }).transform((m) => m.margin ?? null);
 
 const MARGIN_MODES: Record<string, MarginMode> = {
   ACCOUNT_MARGIN_MODE_RETAIL_HEDGING: "HEDGING",

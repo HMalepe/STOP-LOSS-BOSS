@@ -15,7 +15,8 @@ import {
   type MarketEntryItem,
   type PendingEntryItem,
 } from "@/domain/entries";
-import type { PlanItem, Position, Skipped } from "@/domain/types";
+import { riskToStop } from "@/domain/risk";
+import type { PlanItem, Position, Quote, Skipped, SymbolSpec } from "@/domain/types";
 import { canonical } from "../audit/audit";
 import { sha256 } from "../auth/crypto";
 import type { Db } from "../db/sql";
@@ -101,6 +102,7 @@ export type StoredAction = PlanDraft["action"] | "market" | "ladder";
 export interface StorableDraft extends Omit<PlanDraft, "action" | "items"> {
   readonly action: StoredAction;
   readonly items: readonly StoredItem[];
+  readonly risk?: RiskPreview;
 }
 
 export interface PlanSummary {
@@ -114,6 +116,17 @@ export interface PlanSummary {
   readonly breakdown: PlanDraft["breakdown"] & { readonly totalLots?: number };
   readonly warnings: readonly string[];
   readonly mode: TradingMode;
+  /** Order Desk entries only: money at risk to SL (R9.2) and margin (R9.3), as shown before confirm (OD6). */
+  readonly risk?: RiskPreview;
+}
+
+export interface RiskPreview {
+  readonly currency: string;
+  readonly toStop: number;
+  readonly pctOfEquity: number;
+  readonly capPct: number;
+  readonly marginRequired: number;
+  readonly freeMargin: number;
 }
 
 export type CreatePlanResult =
@@ -242,6 +255,7 @@ export async function storePlan(
     breakdown: { ...plan.breakdown, ...(lots > 0 ? { totalLots: cents(lots) } : {}) },
     warnings: plan.warnings,
     mode: svc.mode,
+    ...(plan.risk === undefined ? {} : { risk: plan.risk }),
   };
   await db.tx(async (t) => {
     // Housekeeping (security review L4): previews nobody executed are worthless after a day.
@@ -379,7 +393,10 @@ async function createEntryPlan(
     return { ok: false, error: e.code === "PLAN_INVALID" ? { ...e, details: [] } : e };
   }
   const p = built.plan;
+  const checked = await checkRiskAndMargin(svc, account, spec, quote, p.items, caps.maxRiskPct);
+  if (!checked.ok) return { ok: false, error: checked.error };
   const draft: StorableDraft = {
+    risk: checked.risk,
     action: body.action,
     symbol: p.symbol,
     quote: p.quote,
@@ -398,4 +415,78 @@ async function createEntryPlan(
     record,
   );
   return { ok: true, summary };
+}
+
+const money = (n: number, currency: string) => `${n.toFixed(2)} ${currency}`;
+
+/**
+ * OD6 / R9.2 / R9.3, before anything is stored:
+ * - risk to SL must be bounded (every order has an SL) and within the cap (% of equity, from Settings);
+ * - the broker's margin for the whole batch must fit in free margin. Margin is asked once per distinct lot at the
+ *   batch's worst-case price (highest for buys: margin grows with price on FX majors), not once per order.
+ * Anything the broker can't tell us blocks: never estimated (R9.2 "never guess", R9.3).
+ */
+async function checkRiskAndMargin(
+  svc: TradingServices,
+  account: { readonly equity: number; readonly freeMargin: number; readonly currency: string },
+  spec: SymbolSpec,
+  quote: Quote,
+  items: readonly (MarketEntryItem | PendingEntryItem)[],
+  capPct: number,
+): Promise<{ ok: true; risk: RiskPreview } | { ok: false; error: PlanError }> {
+  const invalid = (message: string) => ({
+    ok: false as const,
+    error: { code: "PLAN_INVALID" as const, message, details: [] },
+  });
+  const risk = riskToStop(items, spec, quote);
+  if (!risk.ok) {
+    return { ok: false, error: { code: "BROKER_UNAVAILABLE", message: risk.message, details: [] } };
+  }
+  if (risk.total === null) {
+    return invalid(
+      `No stop loss means the risk can't be capped (your cap is ${String(capPct)}% of equity). Set an SL to fire this batch.`,
+    );
+  }
+  if (!(account.equity > 0)) return invalid("Equity is zero: nothing can be risked.");
+  const limit = (account.equity * capPct) / 100;
+  if (risk.total > limit + 1e-9) {
+    return invalid(
+      `Risk to SL is ${money(risk.total, account.currency)}, over your cap of ${String(capPct)}% of equity (${money(limit, account.currency)}).`,
+    );
+  }
+
+  const side =
+    items[0]?.op === "market" ? items[0].side : items[0]?.type.startsWith("BUY") === true ? "BUY" : "SELL";
+  const worst = Math.max(
+    ...items.map((i) => (i.op === "pending" ? i.openPrice : i.side === "BUY" ? quote.ask : quote.bid)),
+  );
+  const byLot = new Map<number, number>();
+  for (const i of items) byLot.set(i.volume, (byLot.get(i.volume) ?? 0) + 1);
+  let required = 0;
+  for (const [volume, count] of byLot) {
+    const m = await svc.broker.calculateMargin({ symbol: spec.symbol, side, volume, openPrice: worst });
+    if (m === null) {
+      return invalid(
+        "The broker can't calculate the margin for this batch right now, so it can't be checked. Nothing was stored.",
+      );
+    }
+    required += m * count;
+  }
+  required = Math.round(required * 100) / 100;
+  if (required > account.freeMargin) {
+    return invalid(
+      `This batch needs ${money(required, account.currency)} margin; free margin is ${money(account.freeMargin, account.currency)}.`,
+    );
+  }
+  return {
+    ok: true,
+    risk: {
+      currency: account.currency,
+      toStop: risk.total,
+      pctOfEquity: Math.round((risk.total / account.equity) * 10_000) / 100,
+      capPct,
+      marginRequired: required,
+      freeMargin: account.freeMargin,
+    },
+  };
 }

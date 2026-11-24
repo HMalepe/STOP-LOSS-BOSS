@@ -56,6 +56,7 @@ function toPort(c: Streaming, api: Api): MetaApiConnectionPort {
       return c.synchronized;
     },
     subscribeToMarketData: (symbol) => c.subscribeToMarketData(symbol, [{ type: "quotes" }]),
+    calculateMargin: (o) => c.calculateMargin(o),
     modifyPosition: (id, sl, tp) => c.modifyPosition(id, sl, tp),
     closePosition: (id) => c.closePosition(id, {}),
     cancelOrder: (id) => c.cancelOrder(id),

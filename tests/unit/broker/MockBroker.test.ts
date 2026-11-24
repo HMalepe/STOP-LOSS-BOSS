@@ -398,6 +398,14 @@ describe("faults, connection, recorder, account", () => {
     expect(a.marginLevel).toBeCloseTo((1010 / 108.5) * 100, 6);
   });
 
+  it("R9.3 margin: volume × contract size × price / leverage, rounded to cents", async () => {
+    const { b } = broker();
+    const lev = (await b.getAccount()).leverage;
+    expect(await b.calculateMargin({ symbol: "EURUSD", side: "BUY", volume: 0.1, openPrice: 1.0861 })).toBe(
+      Math.round(((0.1 * 100_000 * 1.0861) / lev) * 100) / 100,
+    );
+  });
+
   it("quotes, specs, sell P/L, unknown symbols", async () => {
     const { b, clock } = broker();
     b.setQuote("EURUSD", 1.087, 1.0871);
@@ -406,6 +414,7 @@ describe("faults, connection, recorder, account", () => {
       bid: 1.087,
       ask: 1.0871,
       time: clock.now(),
+      lossTickValue: 1,
     });
     expect(await b.getSymbolSpec("EURUSD")).toEqual(SPEC);
     b.seedPosition({

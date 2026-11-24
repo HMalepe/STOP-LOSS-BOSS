@@ -21,6 +21,7 @@ import {
   type Reconciled,
   type TradeResult,
   type Lenient,
+  type MarginQuery,
   type Unreadable,
 } from "./BrokerProvider";
 import { reconcileFrom } from "./reconcile";
@@ -286,7 +287,15 @@ export class MockBroker implements BrokerProvider {
   getQuote(symbol: string): Promise<Quote> {
     return this.#read(() => {
       const s = this.#symbol(symbol);
-      return { symbol, bid: s.bid, ask: s.ask, time: this.#opts.clock.now() };
+      return { symbol, bid: s.bid, ask: s.ask, time: this.#opts.clock.now(), lossTickValue: s.tickValue };
+    });
+  }
+
+  /** Same formula the mock uses to fill: volume × contract size × price / leverage. */
+  calculateMargin(o: MarginQuery): Promise<number | null> {
+    return this.#read(() => {
+      const s = this.#symbol(o.symbol);
+      return Math.round(((o.volume * s.contractSize * o.openPrice) / this.#leverage()) * 100) / 100;
     });
   }
 

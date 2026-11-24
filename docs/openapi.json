@@ -1239,7 +1239,7 @@
                     },
                     "action": {
                       "type": "string",
-                      "enum": ["levels", "closeAt", "close", "breakeven", "lock"]
+                      "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
                     },
                     "symbol": {
                       "type": "string"
@@ -1339,6 +1339,42 @@
                     "mode": {
                       "type": "string",
                       "enum": ["mock", "demo", "live"]
+                    },
+                    "risk": {
+                      "type": "object",
+                      "properties": {
+                        "currency": {
+                          "type": "string"
+                        },
+                        "toStop": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "pctOfEquity": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "capPct": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "marginRequired": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "freeMargin": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "currency",
+                        "toStop",
+                        "pctOfEquity",
+                        "capPct",
+                        "marginRequired",
+                        "freeMargin"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -1850,7 +1886,7 @@
                     },
                     "action": {
                       "type": "string",
-                      "enum": ["levels", "closeAt", "close", "breakeven", "lock"]
+                      "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
                     },
                     "symbol": {
                       "type": "string"
@@ -1950,6 +1986,42 @@
                     "mode": {
                       "type": "string",
                       "enum": ["mock", "demo", "live"]
+                    },
+                    "risk": {
+                      "type": "object",
+                      "properties": {
+                        "currency": {
+                          "type": "string"
+                        },
+                        "toStop": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "pctOfEquity": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "capPct": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "marginRequired": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "freeMargin": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "currency",
+                        "toStop",
+                        "pctOfEquity",
+                        "capPct",
+                        "marginRequired",
+                        "freeMargin"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -2119,7 +2191,7 @@
                             },
                             "action": {
                               "type": "string",
-                              "enum": ["levels", "closeAt", "close", "breakeven", "lock"]
+                              "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
                             },
                             "symbol": {
                               "type": "string"
@@ -2219,6 +2291,42 @@
                             "mode": {
                               "type": "string",
                               "enum": ["mock", "demo", "live"]
+                            },
+                            "risk": {
+                              "type": "object",
+                              "properties": {
+                                "currency": {
+                                  "type": "string"
+                                },
+                                "toStop": {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                "pctOfEquity": {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                "capPct": {
+                                  "type": "number",
+                                  "exclusiveMinimum": 0
+                                },
+                                "marginRequired": {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                "freeMargin": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "currency",
+                                "toStop",
+                                "pctOfEquity",
+                                "capPct",
+                                "marginRequired",
+                                "freeMargin"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [

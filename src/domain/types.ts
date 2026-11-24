@@ -36,6 +36,11 @@ export interface Quote {
   readonly ask: number;
   /** Epoch ms of the tick. */
   readonly time: number;
+  /**
+   * Value of one tick for 1.0 lot, in account currency, for a LOSING position (MetaApi price `lossTickValue`,
+   * verified in metaapi.cloud-sdk@29.3.4). Absent when the feed didn't send it: risk is then not computed, never guessed.
+   */
+  readonly lossTickValue?: number;
 }
 
 export interface Position {

@@ -87,6 +87,7 @@ Read directly from the published package (`dist/**/*.d.ts` and the JS it ships),
 | Price fields | `symbol`, `bid`, `ask`, `profitTickValue`, `lossTickValue`, `time: Date` | same |
 | Account | `marginMode` ∈ {ACCOUNT_MARGIN_MODE_RETAIL_HEDGING, _RETAIL_NETTING, _EXCHANGE}, `balance`, `equity`, `margin`, `freeMargin`, `marginLevel`, `tradeAllowed`, `currency`, `leverage` | same |
 | Tick value (R9.2) | Price stream carries `profitTickValue` and `lossTickValue`; the SDK's own P/L is `Δprice × tickValue × volume / tickSize` (`terminalState.js`). Risk to SL uses `lossTickValue` | metaapi.cloud-sdk@29.3.4 `dist/metaApi/terminalState.js` |
+| Margin (R9.3) | `connection.calculateMargin({symbol, type: ORDER_TYPE_BUY|ORDER_TYPE_SELL, volume, openPrice})` → `{margin?}`; `margin` undefined when it can't be calculated → we block. Asked once per distinct lot per preview | metaapi.cloud-sdk@29.3.4 `metaApiConnectionInstance.d.ts`, `metaApiWebsocket.client.schemas.d.ts` |
 | Margin calc | `calculateMargin(order)` exists (R9.3 can use the broker's number) | `metaApiConnectionInstance.d.ts` |
 
 ### Consequences (ADR-0008)

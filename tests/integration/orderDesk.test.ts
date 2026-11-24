@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BrokerProvider } from "@/broker/BrokerProvider";
 import type { MockBroker } from "@/broker/MockBroker";
 import { setKillSwitch } from "@/server/killSwitch";
+import { planSummary } from "@/server/http/contract";
 import { makeSettingsRoutes } from "@/server/http/settingsRoutes";
 import { makeTradingRoutes } from "@/server/http/tradingRoutes";
 import type { StoredItem } from "@/server/trading/plans";
@@ -62,6 +63,16 @@ async function run(id: string, r = routes): Promise<{ res: Response; executionId
   await svc.background.idle();
   return { res, executionId };
 }
+const override = (b: MockBroker, over: Partial<BrokerProvider>): BrokerProvider =>
+  new Proxy(b, {
+    get(t, prop, recv) {
+      if (prop in over) return over[prop as keyof BrokerProvider];
+      const v: unknown = Reflect.get(t, prop, recv);
+      return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+    },
+  });
+const routesWith = (over: Partial<BrokerProvider>) =>
+  makeTradingRoutes(s.guard, () => Promise.resolve({ ...svc, broker: override(broker, over) }));
 const withAccount = (b: MockBroker, marginMode: "HEDGING" | "NETTING"): BrokerProvider =>
   new Proxy(b, {
     get(t, prop, recv) {
@@ -185,5 +196,77 @@ describe("OD2 ladder: preview → execute", () => {
     const e = (await res.json()) as { error: { code: string; details: unknown[] } };
     expect(e.error.code).toBe("PRICE_MOVED");
     expect(e.error.details).toHaveLength(2);
+  });
+});
+
+describe("M3b: risk to SL and margin, before anything is stored (OD6, R9.2, R9.3)", () => {
+  it("the preview shows money at risk, % of equity, the cap, margin required and free margin; matches the contract", async () => {
+    const res = await preview(MARKET);
+    const summary = planSummary.parse(await res.json());
+    // EURUSD tick value 1/lot: 150 pts × 1 × 0.05 lot × 3 orders = 22.50, as a % of the live equity.
+    const { equity, freeMargin } = await broker.getAccount();
+    expect(summary.risk).toMatchObject({
+      currency: "USD",
+      toStop: 22.5,
+      pctOfEquity: Math.round((22.5 / equity) * 10_000) / 100,
+      capPct: 2,
+      freeMargin,
+    });
+    expect(summary.risk?.marginRequired).toBeGreaterThan(0);
+  });
+
+  it("no SL → refused: the risk can't be capped", async () => {
+    const res = await preview({ ...MARKET, stopLoss: undefined });
+    expect(res.status).toBe(422);
+    expect((await errorOf(res)).message).toMatch(/No stop loss means the risk can't be capped/);
+  });
+
+  it("over the risk cap → refused with the numbers", async () => {
+    // 20 × 0.25 lot × 1,000 pts = 5,000 USD, far over 2% of 10,000.
+    const res = await preview({
+      ...MARKET,
+      count: 20,
+      volume: 0.25,
+      stopLoss: { kind: "points", value: 1000 },
+    });
+    expect(res.status).toBe(422);
+    const cap = (((await broker.getAccount()).equity * 2) / 100).toFixed(2);
+    expect((await errorOf(res)).message).toBe(
+      `Risk to SL is 5000.00 USD, over your cap of 2% of equity (${cap} USD).`,
+    );
+  });
+
+  it("margin over free margin → refused; the broker can't compute it → refused, never estimated", async () => {
+    const big = await preview(MARKET, routesWith({ calculateMargin: () => Promise.resolve(1_000_000) }));
+    expect((await errorOf(big)).message).toMatch(/needs .* margin; free margin is/);
+    const unknown = await preview(MARKET, routesWith({ calculateMargin: () => Promise.resolve(null) }));
+    expect(unknown.status).toBe(422);
+    expect((await errorOf(unknown)).message).toMatch(/can't calculate the margin/);
+  });
+
+  it("margin is asked once per distinct lot (a 3-order batch is one broker call), at the worst price", async () => {
+    const asked: { volume: number; openPrice: number }[] = [];
+    const r = routesWith({
+      calculateMargin: (o) => {
+        asked.push({ volume: o.volume, openPrice: o.openPrice });
+        return broker.calculateMargin(o);
+      },
+    });
+    await preview(MARKET, r);
+    expect(asked).toEqual([{ volume: 0.05, openPrice: 1.08611 }]);
+    asked.length = 0;
+    await preview({ ...LADDER, lots: { mode: "scaled", start: 0.1, end: 0.3 } }, r);
+    expect(asked.map((a) => a.volume)).toEqual([0.1, 0.2, 0.3]);
+    expect(new Set(asked.map((a) => a.openPrice))).toEqual(new Set([1.085]));
+  });
+
+  it("no tick value from the feed → 503, never a guessed risk", async () => {
+    const r = routesWith({
+      getQuote: async (x) => {
+        const q = await broker.getQuote(x);
+        return { symbol: q.symbol, bid: q.bid, ask: q.ask, time: q.time };
+      },
+    });
+    expect((await preview(MARKET, r)).status).toBe(503);
   });
 });

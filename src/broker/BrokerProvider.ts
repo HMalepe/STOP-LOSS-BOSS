@@ -107,6 +107,13 @@ export type Reconciled =
   | { readonly status: "inFlight" }
   | { readonly status: "notFound" };
 
+export interface MarginQuery {
+  readonly symbol: string;
+  readonly side: Side;
+  readonly volume: number;
+  readonly openPrice: number;
+}
+
 /** A row close-now couldn't use at all. */
 export interface Unreadable {
   readonly id: string | null;
@@ -131,6 +138,11 @@ export interface BrokerProvider {
   getPositionsForClose(): Promise<Lenient<Position>>;
   getOrdersForClose(): Promise<Lenient<PendingOrder>>;
   getQuote(symbol: string): Promise<Quote>;
+  /**
+   * R9.3: margin the broker would require to open this order, in account currency. null = the broker couldn't
+   * calculate it (MetaApi `calculateMargin` leaves `margin` undefined then): the caller must block, never estimate.
+   */
+  calculateMargin(order: MarginQuery): Promise<number | null>;
   getSymbolSpec(symbol: string): Promise<SymbolSpec>;
   modifyPosition(positionId: string, levels: Levels): Promise<TradeResult>;
   closePosition(positionId: string): Promise<TradeResult>;

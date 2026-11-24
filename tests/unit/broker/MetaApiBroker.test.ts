@@ -75,6 +75,7 @@ function fake(over: Partial<{ connected: boolean; connectedToBroker: boolean; sy
     terminalState: ts,
     synchronized: over.synchronized ?? true,
     subscribeToMarketData: vi.fn((): Promise<unknown> => Promise.resolve()),
+    calculateMargin: vi.fn((): Promise<unknown> => Promise.resolve({ margin: 217.22 })),
     modifyPosition: vi.fn((): Promise<unknown> => Promise.resolve(done)),
     closePosition: vi.fn((): Promise<unknown> => Promise.resolve(done)),
     cancelOrder: vi.fn((): Promise<unknown> => Promise.resolve(done)),
@@ -95,6 +96,65 @@ const market = { ...tag, symbol: "EURUSD", side: "BUY" as const, volume: 0.1, sl
 afterEach(() => {
   vi.useRealTimers();
   resetSharedMetaApiBroker();
+});
+
+describe("R9.3 margin (calculateMargin)", () => {
+  it("asks MetaApi with the SDK's order shape and returns the margin", async () => {
+    const conn = fake();
+    const b = new MetaApiBroker(conn);
+    expect(await b.calculateMargin({ symbol: "EURUSD", side: "SELL", volume: 0.2, openPrice: 1.086 })).toBe(
+      217.22,
+    );
+    expect(conn.calculateMargin).toHaveBeenCalledWith({
+      symbol: "EURUSD",
+      type: "ORDER_TYPE_SELL",
+      volume: 0.2,
+      openPrice: 1.086,
+    });
+  });
+
+  it("no margin in the answer, a bad value, an SDK error or a timeout → null (the caller blocks, never estimates)", async () => {
+    vi.useFakeTimers();
+    for (const answer of [
+      () => Promise.resolve({}),
+      () => Promise.resolve({ margin: -1 }),
+      () => Promise.resolve({ margin: "x" }),
+      () => Promise.reject(new Error("boom")),
+    ]) {
+      const conn = fake();
+      conn.calculateMargin.mockImplementation(answer);
+      expect(
+        await new MetaApiBroker(conn).calculateMargin({
+          symbol: "EURUSD",
+          side: "BUY",
+          volume: 0.1,
+          openPrice: 1,
+        }),
+      ).toBeNull();
+    }
+    const conn = fake();
+    conn.calculateMargin.mockImplementation(() => new Promise(() => undefined));
+    const p = new MetaApiBroker(conn, { readTimeoutMs: 50 }).calculateMargin({
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 0.1,
+      openPrice: 1,
+    });
+    await vi.advanceTimersByTimeAsync(60);
+    expect(await p).toBeNull();
+  });
+
+  it("quotes carry lossTickValue when the stream sends it (R9.2)", async () => {
+    const conn = fake();
+    conn.terminalState.price.mockReturnValue({
+      symbol: "EURUSD",
+      bid: 1.086,
+      ask: 1.0861,
+      time: new Date(5),
+      lossTickValue: 0.98,
+    });
+    expect(await new MetaApiBroker(conn).getQuote("EURUSD")).toMatchObject({ lossTickValue: 0.98 });
+  });
 });
 
 describe("close-now reads (lenient)", () => {

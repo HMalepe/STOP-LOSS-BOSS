@@ -23,7 +23,7 @@ const skipped = z.strictObject({ id: z.string(), reason: z.string() });
 
 export const planSummary = z.strictObject({
   id: z.uuid(),
-  action: z.enum(["levels", "closeAt", "close", "breakeven", "lock"]),
+  action: z.enum(["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]),
   symbol: z.string(),
   expiresAt: z.iso.datetime(),
   quote: z.strictObject({ bid: z.number(), ask: z.number(), time: z.iso.datetime() }).nullable(),
@@ -39,6 +39,17 @@ export const planSummary = z.strictObject({
   }),
   warnings: z.array(z.string()),
   mode: z.enum(["mock", "demo", "live"]),
+  /** Order Desk entries only (OD6, R9.2, R9.3). */
+  risk: z
+    .strictObject({
+      currency: z.string(),
+      toStop: z.number().nonnegative(),
+      pctOfEquity: z.number().nonnegative(),
+      capPct: z.number().positive(),
+      marginRequired: z.number().nonnegative(),
+      freeMargin: z.number(),
+    })
+    .optional(),
 });
 
 export const planViolation = z.strictObject({
