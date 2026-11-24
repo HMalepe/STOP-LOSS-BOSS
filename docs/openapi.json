@@ -45,6 +45,7 @@
                   "ACCOUNT_MODE_MISMATCH",
                   "BROKER_UNAVAILABLE",
                   "SHUTTING_DOWN",
+                  "SPREAD_TOO_WIDE",
                   "NOT_FOUND",
                   "INTERNAL"
                 ]
@@ -1613,7 +1614,7 @@
             }
           },
           "409": {
-            "description": "PLAN_EXPIRED | PLAN_ALREADY_EXECUTED | PRICE_MOVED | PRICE_STALE",
+            "description": "PLAN_EXPIRED | PLAN_ALREADY_EXECUTED | PRICE_MOVED | PRICE_STALE | SPREAD_TOO_WIDE",
             "content": {
               "application/json": {
                 "schema": {

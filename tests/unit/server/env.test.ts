@@ -85,6 +85,15 @@ describe("loadEnv per mode", () => {
     }
   });
 
+  it("R9.4a SPREAD_MAX_POINTS: off by default, parsed per symbol, nonsense refused", () => {
+    expect(loadEnv(demoBase).SPREAD_MAX_POINTS).toEqual({});
+    expect(loadEnv({ ...demoBase, SPREAD_MAX_POINTS: "EURUSD:30,XAUUSD:80" }).SPREAD_MAX_POINTS).toEqual({
+      EURUSD: 30,
+      XAUUSD: 80,
+    });
+    expect(problemsOf({ ...demoBase, SPREAD_MAX_POINTS: "EURUSD=30" })[0]).toMatch(/^SPREAD_MAX_POINTS:/);
+  });
+
   it("graceful shutdown: signal handling must be ours outside mock; drain window is bounded", () => {
     expect(problemsOf({ ...demoBase, NEXT_MANUAL_SIG_HANDLE: "1" })[0]).toMatch(/^NEXT_MANUAL_SIG_HANDLE:/);
     expect(loadEnv(demoBase).SHUTDOWN_DRAIN_MS).toBe(15_000);

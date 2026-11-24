@@ -63,6 +63,22 @@ const schema = z
     // Adaptive spread guard (R9.4b).
     SPREAD_GUARD_K: z.coerce.number().min(1.5).max(20).default(3),
     SPREAD_WINDOW_SEC: int(30, 3600, 300),
+    // R9.4a absolute max per symbol, off by default: "EURUSD:30,XAUUSD:80" (points).
+    SPREAD_MAX_POINTS: z
+      .string()
+      .regex(/^[A-Za-z0-9._#-]+:\d{1,7}(,[A-Za-z0-9._#-]+:\d{1,7})*$/, 'must look like "EURUSD:30,XAUUSD:80"')
+      .optional()
+      .transform((v) =>
+        Object.fromEntries(
+          (v ?? "")
+            .split(",")
+            .filter(Boolean)
+            .map((p) => {
+              const [sym = "", pts = "0"] = p.split(":");
+              return [sym, Number(pts)];
+            }),
+        ),
+      ),
 
     // Graceful shutdown. Next.js exits on SIGTERM at once (process.exit(143), next/dist/server/lib/start-server.js)
     // unless this is set, so our drain would never run. Required outside mock.

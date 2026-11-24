@@ -270,3 +270,52 @@ describe("M3b: risk to SL and margin, before anything is stored (OD6, R9.2, R9.3
     expect((await preview(MARKET, r)).status).toBe(503);
   });
 });
+
+describe("M3c: spread guard at fire time (R9.4)", () => {
+  /** 30+ normal ticks of 10 points, as the stream would have produced while the owner looked at the preview. */
+  const warm = async () => {
+    const spec = await broker.getSymbolSpec("EURUSD");
+    for (let i = 0; i < 40; i++) {
+      svc.spread.record(
+        { symbol: "EURUSD", bid: 1.086, ask: 1.0861, time: s.clock.now() - 40_000 + i * 1_000 },
+        spec,
+      );
+    }
+  };
+
+  it("preview says spread now vs normal; a cold symbol warns but never blocks", async () => {
+    const cold = (await (await preview(MARKET)).json()) as { warnings: string[] };
+    expect(cold.warnings.some((w) => w.startsWith("Spread guard can't judge yet"))).toBe(true);
+    await warm();
+    const res = (await (await preview(MARKET)).json()) as { warnings: string[] };
+    expect(res.warnings).toContain("Spread now 10 pts, normal 10 pts.");
+  });
+
+  it("a spike when firing (news) refuses the whole batch: SPREAD_TOO_WIDE, zero broker calls", async () => {
+    await warm();
+    const id = await planId(MARKET);
+    broker.setQuote("EURUSD", 1.0858, 1.0862); // 40 points wide vs a normal 10; levels still valid
+    const calls = broker.calls.length;
+    const { res } = await run(id);
+    expect(res.status).toBe(409);
+    const e = await errorOf(res);
+    expect(e.code).toBe("SPREAD_TOO_WIDE");
+    expect(e.message).toBe("Spread is 40 pts, normal is 10 pts (limit 3× = 30 pts). Nothing was sent.");
+    expect(broker.calls.length).toBe(calls);
+  });
+
+  it("R9.4a absolute max per symbol blocks even without history", async () => {
+    const strict = makeTradingRoutes(s.guard, () =>
+      Promise.resolve({ ...svc, spreadGuard: { k: 3, maxPts: { EURUSD: 5 } } }),
+    );
+    const id = await planId(MARKET, strict);
+    const { res } = await run(id, strict);
+    expect((await errorOf(res)).message).toMatch(/over this symbol's max of 5 pts/);
+  });
+
+  it("a normal spread fires", async () => {
+    await warm();
+    const { executionId } = await run(await planId(MARKET));
+    expect(executionId).toBeDefined();
+  });
+});

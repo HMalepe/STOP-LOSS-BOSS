@@ -23,6 +23,7 @@ MAX_TOTAL_LOTS=5
 MAX_RISK_PCT_PER_ACTION=2   # % of equity at risk to SL, per action (R9.2)
 SPREAD_GUARD_K=3            # adaptive spread guard multiplier (R9.4b)
 SPREAD_WINDOW_SEC=300
+SPREAD_MAX_POINTS=           # optional R9.4a absolute max per symbol, e.g. EURUSD:30,XAUUSD:80 (off by default)
 WORKER_URL= / WORKER_SHARED_SECRET=   # Phase 9
 NEXT_MANUAL_SIG_HANDLE=true # required outside mock: lets our shutdown drain run (see Graceful shutdown)
 SHUTDOWN_DRAIN_MS=15000     # how long running batches get to finish on SIGTERM

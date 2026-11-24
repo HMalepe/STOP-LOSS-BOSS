@@ -265,6 +265,7 @@ export const OPERATIONS: readonly Op[] = [
       "PRICE_STALE",
       "BROKER_UNAVAILABLE",
       "SHUTTING_DOWN",
+      "SPREAD_TOO_WIDE",
     ],
   },
   {

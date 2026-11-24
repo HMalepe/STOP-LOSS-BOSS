@@ -32,7 +32,7 @@ import { sha256 } from "../auth/crypto";
 import type { Db } from "../db/sql";
 import { killSwitchState, tradingGate, type TradingAction } from "../killSwitch";
 import { tradingModeGate } from "../tradingMode";
-import { itemsHash, MAX_QUOTE_AGE_MS, type StoredItem, type StoredPlan } from "./plans";
+import { itemsHash, MAX_QUOTE_AGE_MS, spreadCheck, type StoredItem, type StoredPlan } from "./plans";
 import type { TradingServices } from "./services";
 
 /** Non-negotiable 7 in the database: flipping the plan and inserting its execution happen together, once. */
@@ -142,6 +142,7 @@ export type ExecuteRefusal =
   | { readonly code: "PLAN_ALREADY_EXECUTED"; readonly message: string; readonly executionId: string | null }
   | { readonly code: "PLAN_EXPIRED" | "PRICE_STALE" | "INTERNAL"; readonly message: string }
   | { readonly code: "SHUTTING_DOWN"; readonly message: string }
+  | { readonly code: "SPREAD_TOO_WIDE"; readonly message: string }
   | { readonly code: "TRADING_HALTED"; readonly message: string }
   | { readonly code: "LIVE_NOT_ENABLED" | "ACCOUNT_MODE_MISMATCH"; readonly message: string }
   | { readonly code: "PRICE_MOVED"; readonly message: string; readonly details: readonly Skipped[] };
@@ -236,6 +237,15 @@ async function entryGuard(
 ): Promise<Guarded> {
   const { quote, spec } = await freshMarket(svc, plan.summary.symbol);
   if (svc.clock.now() - quote.time > MAX_QUOTE_AGE_MS) return { ok: false, refusal: STALE };
+  // R9.4: the spread NOW, not at preview. Too wide → the whole batch is refused, zero calls.
+  svc.spread.record(quote, spec);
+  const spread = spreadCheck(svc, quote, spec);
+  if (spread.block) {
+    return {
+      ok: false,
+      refusal: { code: "SPREAD_TOO_WIDE", message: spread.reason ?? "Spread too wide. Nothing was sent." },
+    };
+  }
   const m = marketFrom(spec, quote);
   const moved = entries.flatMap((e) => entryProblems(e, m).map((reason) => ({ id: e.clientId, reason })));
   if (moved.length > 0) {

@@ -1,5 +1,6 @@
 /** TradingServices on a MockBroker (no real latency) with the real runner and the DB-backed execution store. */
 import { Observability } from "@/server/observability";
+import { SpreadMonitor } from "@/server/trading/spreadMonitor";
 import { TaskTracker } from "@/server/shutdown";
 import type { ManualClock } from "@/domain/clock";
 import type { BrokerProvider } from "@/broker/BrokerProvider";
@@ -30,6 +31,8 @@ export function mockServices(
     }),
     accountRef: null,
     magicPrefix: 7731,
+    spread: new SpreadMonitor({ windowMs: 300_000, clock, every: () => () => undefined }),
+    spreadGuard: { k: 3, maxPts: {} },
     capCeilings: { maxOrdersPerAction: 100, maxTotalLots: 5, maxRiskPct: 2, maxPositionsPerBatch: 1_000 },
     ...over,
   };

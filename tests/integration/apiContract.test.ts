@@ -193,6 +193,28 @@ describe("every error code in docs/04, from a real request", () => {
     await expectError(res, "SHUTTING_DOWN");
   });
 
+  it("SPREAD_TOO_WIDE: an entry batch fired into a spread over the symbol's max", async () => {
+    const strict = makeTradingRoutes(s.guard, () =>
+      Promise.resolve({ ...svc, spreadGuard: { k: 3, maxPts: { EURUSD: 1 } } }),
+    );
+    const res = await strict.createPlan(
+      post(
+        "/api/plans",
+        {
+          action: "market",
+          symbol: "EURUSD",
+          side: "BUY",
+          count: 1,
+          volume: 0.01,
+          stopLoss: { kind: "points", value: 200 },
+        },
+        s.cookie,
+      ),
+    );
+    const { id } = (await res.json()) as { id: string };
+    await expectError(await exec(id, strict), "SPREAD_TOO_WIDE");
+  });
+
   it("NOT_FOUND", async () => {
     await expectError(await routes.getPlan(get("/api/plans/x", s.cookie), "x"), "NOT_FOUND");
   });

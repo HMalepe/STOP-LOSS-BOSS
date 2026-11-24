@@ -25,6 +25,7 @@ import type { Db } from "../db/sql";
 import { DbExecutionStore, markInterrupted, recoverInterrupted } from "./executions";
 import { shutdown, TaskTracker, type ShutdownOptions, type ShutdownReport } from "../shutdown";
 import { SpecCache } from "./specCache";
+import { SpreadMonitor } from "./spreadMonitor";
 
 export interface TradingServices {
   readonly broker: BrokerProvider;
@@ -39,6 +40,9 @@ export interface TradingServices {
   readonly observability: Observability;
   /** Hard ceilings from the env (MAX_*). The owner's own caps (Settings) can only be at or below these. */
   readonly capCeilings: Caps;
+  /** R9.4 spread guard: recent spreads per symbol, K and the optional absolute max per symbol. */
+  readonly spread: SpreadMonitor;
+  readonly spreadGuard: { readonly k: number; readonly maxPts: Readonly<Record<string, number>> };
   /** R9.1 APP_MAGIC_PREFIX: every Order Desk batch's magic is prefix × 10^9 + seq. */
   readonly magicPrefix: number;
   /** The MetaApi account id (the accounts row whose live_enabled counts). null in mock mode. */
@@ -249,6 +253,18 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
     observability,
     capCeilings: capsFromEnv(env),
     magicPrefix: env.APP_MAGIC_PREFIX,
+    spread: new SpreadMonitor({
+      windowMs: env.SPREAD_WINDOW_SEC * 1_000,
+      clock,
+      every: (ms, fn) => {
+        const t = setInterval(fn, ms);
+        t.unref();
+        return () => {
+          clearInterval(t);
+        };
+      },
+    }),
+    spreadGuard: { k: env.SPREAD_GUARD_K, maxPts: env.SPREAD_MAX_POINTS },
     accountRef: env.TRADING_MODE === "mock" ? null : (env.METAAPI_ACCOUNT_ID ?? null),
   };
 }

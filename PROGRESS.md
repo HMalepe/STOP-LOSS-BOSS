@@ -18,7 +18,7 @@
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
 | 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
 | 07 | UI | 🟨 | Stage 1 ✅ design system + shell ("The Observatory", docs/12) · A ✅ trading controls · B ✅ sign-in · C ✅ live desk wired to the API. Next: History, Settings, PWA (M5) |
-| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | Backend: M1 ✅ domain market batch (OD1) · M2 ✅ domain ladder (OD2) · M3a ✅ entries preview→execute (batch seq, R0.2, §7 re-check) · M3b ✅ risk to SL + margin · M3c spread guard · M4 presets |
+| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | Backend: M1 ✅ domain market batch (OD1) · M2 ✅ domain ladder (OD2) · M3a ✅ entries preview→execute (batch seq, R0.2, §7 re-check) · M3b ✅ risk to SL + margin · M3c ✅ spread guard · M4 presets |
 | 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
 | 10 | Hardening and go-live | ⬜ | |
@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-24: R9.4 spread guard: stream quotes sampled 1/s for 10 min after a symbol is previewed (no credits, bounded); at fire, spread > K × median of the window (≥ 30 ticks) or > SPREAD_MAX_POINTS[symbol] → 409 SPREAD_TOO_WIDE, zero calls. Cold symbol: warn, never block. Entries only
 - 2026-11-24: Entry preview checks risk to SL (lossTickValue, SDK formula) ≤ cap % of equity and broker margin ≤ free margin; missing tick value or margin → refuse, never estimate. A batch with no SL is refused (unbounded risk can't pass the cap); the ADR-0011 pair will carry its own exemption. OWNER: overrule if you want no-SL batches allowed
 - 2026-11-24: Entries end to end. Batch identity from a Postgres sequence (0004), short tag = seq in base 36. Execute re-checks EVERY entry vs the market now; any one invalid → PRICE_MOVED, zero calls. Retry-failed never re-fires entries (check fills, preview again)
 - 2026-11-24: R5.6a added: a pending order's SL/TP are ≥ d from its own open price (MT5 refuses otherwise); any bad level refuses the whole ladder, all listed. Ladder lots computed on integer volume steps, rounded down; step mode must be a multiple of the tick

@@ -15,7 +15,9 @@ import {
   type MarketEntryItem,
   type PendingEntryItem,
 } from "@/domain/entries";
+import { toPoints } from "@/domain/price";
 import { riskToStop } from "@/domain/risk";
+import { spreadVerdict } from "@/domain/spread";
 import type { PlanItem, Position, Quote, Skipped, SymbolSpec } from "@/domain/types";
 import { canonical } from "../audit/audit";
 import { sha256 } from "../auth/crypto";
@@ -355,6 +357,12 @@ async function createEntryPlan(
       },
     };
   }
+  // R9.4: start (or keep) sampling this symbol so the guard has a baseline by the time the owner fires.
+  svc.spread.record(quote, spec);
+  svc.spread.watch(body.symbol, async () => ({
+    quote: await svc.broker.getQuote(body.symbol),
+    spec: await svc.specs.get(body.symbol),
+  }));
   const caps = await effectiveCaps(db, svc.capCeilings);
   const id = await allocateBatch(db, svc.magicPrefix);
   const built =
@@ -403,7 +411,7 @@ async function createEntryPlan(
     items: p.items,
     skipped: [],
     breakdown: { buys: p.side === "BUY" ? p.items.length : 0, sells: p.side === "SELL" ? p.items.length : 0 },
-    warnings: p.warnings,
+    warnings: [...p.warnings, ...spreadNotes(svc, quote, spec)],
   };
   const summary = await storePlan(
     svc,
@@ -489,4 +497,27 @@ async function checkRiskAndMargin(
       freeMargin: account.freeMargin,
     },
   };
+}
+
+/** R9.4 at preview: "spread now X, normal Y", plus a heads-up if firing right now would be refused. */
+export function spreadCheck(
+  svc: Pick<TradingServices, "spread" | "spreadGuard">,
+  quote: Quote,
+  spec: SymbolSpec,
+) {
+  return spreadVerdict({
+    spreadPts: toPoints(quote.ask, spec) - toPoints(quote.bid, spec),
+    samples: svc.spread.samples(quote.symbol),
+    k: svc.spreadGuard.k,
+    maxPts: svc.spreadGuard.maxPts[quote.symbol],
+  });
+}
+
+function spreadNotes(svc: TradingServices, quote: Quote, spec: SymbolSpec): string[] {
+  const v = spreadCheck(svc, quote, spec);
+  return [
+    v.summary,
+    ...(v.warning === undefined ? [] : [v.warning]),
+    ...(v.block ? ["The spread is too wide right now: firing would be refused until it narrows."] : []),
+  ];
 }
