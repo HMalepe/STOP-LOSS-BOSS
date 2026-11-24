@@ -24,7 +24,8 @@ import type { Mode } from "@/ui/ModeBadge";
 import { PriceInput } from "@/ui/PriceInput";
 import { ProgressView } from "@/ui/ProgressView";
 import { Segmented } from "@/ui/Segmented";
-import { EmptyState, ErrorState } from "@/ui/States";
+import { EmptyState, ErrorState, OfflineBanner } from "@/ui/States";
+import { useOnline } from "@/ui/useOnline";
 import { StatusBadge } from "@/ui/StatusBadge";
 import { useToast } from "@/ui/Toast";
 import { useNow } from "@/ui/useNow";
@@ -56,6 +57,7 @@ export function Desk({
 }) {
   const toast = useToast();
   const now = useNow(500);
+  const online = useOnline();
   const [symbol, setSymbol] = useState(initialSymbol);
   const { state, positions, error, lastOk, refresh } = useDeskData(symbol);
   const [side, setSide] = useState<Side>("ALL");
@@ -77,7 +79,9 @@ export function Desk({
   const focus = state?.focus?.symbol === symbol ? state.focus : undefined;
   const digits = focus?.spec.digits ?? 2;
   const halted = state?.killSwitch.halted === true;
-  const brokerDown = error !== null && (error.code === "BROKER_UNAVAILABLE" || error.code === "OFFLINE");
+  const brokerDown =
+    online && error !== null && (error.code === "BROKER_UNAVAILABLE" || error.code === "OFFLINE");
+  const blocked = halted || brokerDown || !online;
   const link: Link = error !== null ? "down" : lastOk !== null && now - lastOk > 3_000 ? "stale" : "live";
   const summary = state?.symbols.find((x) => x.symbol === symbol);
   const pl = summary === undefined ? 0 : summary.buy.profit + summary.sell.profit;
@@ -295,6 +299,11 @@ export function Desk({
         />
       }
     >
+      {online ? null : (
+        <div className="panel overflow-hidden">
+          <OfflineBanner />
+        </div>
+      )}
       {halted ? <HaltedBanner /> : null}
       {brokerDown ? (
         <ErrorState
@@ -408,7 +417,7 @@ export function Desk({
               variant="primary"
               block
               loading={previewing}
-              disabled={halted || brokerDown}
+              disabled={blocked}
               icon={<Crosshair aria-hidden className="size-4" />}
               onClick={() => void preview()}
             >
@@ -438,7 +447,7 @@ export function Desk({
               variant="primary"
               block
               loading={previewing}
-              disabled={halted || brokerDown}
+              disabled={blocked}
               icon={<Crosshair aria-hidden className="size-4" />}
               onClick={() => void preview()}
             >
@@ -461,7 +470,7 @@ export function Desk({
               unit="pts"
               action="Preview"
               busy={previewing}
-              disabled={halted || brokerDown}
+              disabled={blocked}
               onGo={() => void helper("breakeven")}
             />
             <HelperRow
@@ -472,7 +481,7 @@ export function Desk({
               unit="pts"
               action="Preview"
               busy={previewing}
-              disabled={halted || brokerDown}
+              disabled={blocked}
               onGo={() => void helper("lock")}
             />
           </div>

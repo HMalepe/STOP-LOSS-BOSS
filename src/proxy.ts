@@ -24,7 +24,7 @@ export const config = {
   // Pages only: not API routes (JSON), not static assets, not prefetches.
   matcher: [
     {
-      source: "/((?!api|_next/static|_next/image|favicon.ico|icons|manifest).*)",
+      source: "/((?!api|_next/static|_next/image|favicon.ico|icons|manifest|sw.js|offline).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },
