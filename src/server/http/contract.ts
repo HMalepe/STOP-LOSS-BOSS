@@ -43,8 +43,9 @@ export const planSummary = z.strictObject({
   risk: z
     .strictObject({
       currency: z.string(),
-      toStop: z.number().nonnegative(),
-      pctOfEquity: z.number().nonnegative(),
+      /** null when any order has no SL (unbounded). */
+      toStop: z.number().nonnegative().nullable(),
+      pctOfEquity: z.number().nonnegative().nullable(),
       capPct: z.number().positive(),
       marginRequired: z.number().nonnegative(),
       freeMargin: z.number(),

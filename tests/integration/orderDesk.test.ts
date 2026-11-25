@@ -215,10 +215,30 @@ describe("M3b: risk to SL and margin, before anything is stored (OD6, R9.2, R9.3
     expect(summary.risk?.marginRequired).toBeGreaterThan(0);
   });
 
-  it("no SL → refused: the risk can't be capped", async () => {
+  it("no SL is allowed (owner decision): unbounded risk is shown as null with a loud warning, margin still checked", async () => {
     const res = await preview({ ...MARKET, stopLoss: undefined });
-    expect(res.status).toBe(422);
-    expect((await errorOf(res)).message).toMatch(/No stop loss means the risk can't be capped/);
+    expect(res.status).toBe(201);
+    const summary = planSummary.parse(await res.json());
+    expect(summary.risk).toMatchObject({ toStop: null, pctOfEquity: null, capPct: 2 });
+    expect(summary.risk?.marginRequired).toBeGreaterThan(0);
+    expect(summary.warnings).toContain(
+      "No stop loss: the loss on these orders is limited only by your account.",
+    );
+    const big = await preview(
+      { ...MARKET, stopLoss: undefined },
+      routesWith({ calculateMargin: () => Promise.resolve(1_000_000) }),
+    );
+    expect((await errorOf(big)).message).toMatch(/needs .* margin; free margin is/);
+  });
+
+  it("no-SL batch fires and opens orders with no stop (the only thing standing is what you asked for)", async () => {
+    const id = await planId({ ...MARKET, stopLoss: undefined, takeProfit: undefined });
+    const { executionId } = await run(id);
+    expect(executionId).toBeDefined();
+    const magic = ((await itemsOf(id))[0] as { magic: number }).magic;
+    const opened = (await broker.getPositions()).filter((p) => p.magic === magic);
+    expect(opened).toHaveLength(3);
+    expect(opened.every((p) => p.sl === null)).toBe(true);
   });
 
   it("over the risk cap → refused with the numbers", async () => {

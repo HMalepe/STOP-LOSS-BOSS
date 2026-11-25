@@ -124,8 +124,9 @@ export interface PlanSummary {
 
 export interface RiskPreview {
   readonly currency: string;
-  readonly toStop: number;
-  readonly pctOfEquity: number;
+  /** null = at least one order has no SL: the loss is limited only by the account, so there is no number. */
+  readonly toStop: number | null;
+  readonly pctOfEquity: number | null;
   readonly capPct: number;
   readonly marginRequired: number;
   readonly freeMargin: number;
@@ -450,14 +451,11 @@ async function checkRiskAndMargin(
   if (!risk.ok) {
     return { ok: false, error: { code: "BROKER_UNAVAILABLE", message: risk.message, details: [] } };
   }
-  if (risk.total === null) {
-    return invalid(
-      `No stop loss means the risk can't be capped (your cap is ${String(capPct)}% of equity). Set an SL to fire this batch.`,
-    );
-  }
   if (!(account.equity > 0)) return invalid("Equity is zero: nothing can be risked.");
+  // Owner decision (2026-11-25): batches without an SL are allowed. Their risk is unbounded, so the % cap can't apply;
+  // the preview says so (toStop null + the no-SL warning) and margin below still has to fit.
   const limit = (account.equity * capPct) / 100;
-  if (risk.total > limit + 1e-9) {
+  if (risk.total !== null && risk.total > limit + 1e-9) {
     return invalid(
       `Risk to SL is ${money(risk.total, account.currency)}, over your cap of ${String(capPct)}% of equity (${money(limit, account.currency)}).`,
     );
@@ -491,7 +489,7 @@ async function checkRiskAndMargin(
     risk: {
       currency: account.currency,
       toStop: risk.total,
-      pctOfEquity: Math.round((risk.total / account.equity) * 10_000) / 100,
+      pctOfEquity: risk.total === null ? null : Math.round((risk.total / account.equity) * 10_000) / 100,
       capPct,
       marginRequired: required,
       freeMargin: account.freeMargin,

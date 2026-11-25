@@ -1348,12 +1348,26 @@
                           "type": "string"
                         },
                         "toStop": {
-                          "type": "number",
-                          "minimum": 0
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "pctOfEquity": {
-                          "type": "number",
-                          "minimum": 0
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "capPct": {
                           "type": "number",
@@ -1995,12 +2009,26 @@
                           "type": "string"
                         },
                         "toStop": {
-                          "type": "number",
-                          "minimum": 0
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "pctOfEquity": {
-                          "type": "number",
-                          "minimum": 0
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "capPct": {
                           "type": "number",
@@ -2300,12 +2328,26 @@
                                   "type": "string"
                                 },
                                 "toStop": {
-                                  "type": "number",
-                                  "minimum": 0
+                                  "anyOf": [
+                                    {
+                                      "type": "number",
+                                      "minimum": 0
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
                                 },
                                 "pctOfEquity": {
-                                  "type": "number",
-                                  "minimum": 0
+                                  "anyOf": [
+                                    {
+                                      "type": "number",
+                                      "minimum": 0
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
                                 },
                                 "capPct": {
                                   "type": "number",

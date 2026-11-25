@@ -26,6 +26,8 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-25 (owner): Batches with no SL are ALLOWED. Risk shown as null (unbounded) with the no-SL warning; the % risk cap can't apply, margin still must fit. Supersedes the 2026-11-24 "refuse no-SL" line
+- 2026-11-25 (owner): Q3 no: live execute does not need a fresh authenticator code
 - 2026-11-24: R9.4 spread guard: stream quotes sampled 1/s for 10 min after a symbol is previewed (no credits, bounded); at fire, spread > K × median of the window (≥ 30 ticks) or > SPREAD_MAX_POINTS[symbol] → 409 SPREAD_TOO_WIDE, zero calls. Cold symbol: warn, never block. Entries only
 - 2026-11-24: Entry preview checks risk to SL (lossTickValue, SDK formula) ≤ cap % of equity and broker margin ≤ free margin; missing tick value or margin → refuse, never estimate. A batch with no SL is refused (unbounded risk can't pass the cap); the ADR-0011 pair will carry its own exemption. OWNER: overrule if you want no-SL batches allowed
 - 2026-11-24: Entries end to end. Batch identity from a Postgres sequence (0004), short tag = seq in base 36. Execute re-checks EVERY entry vs the market now; any one invalid → PRICE_MOVED, zero calls. Retry-failed never re-fires entries (check fills, preview again)
@@ -93,7 +95,7 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - ADR-0010 one-request panic close: verify on demo first.
 
 ## Open questions for the owner
-- **Q3** Require a fresh authenticator code before each EXECUTE in live mode? Safer against a stolen unlocked phone; costs one code per live batch. Close-now stays exempt either way.
+- ~~Q3~~ answered 2026-11-25: **no** fresh authenticator code before each live execute (session + live gates + caps stay the protection).
 - **Q2** (needed by Phase 03) Is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet? R0.2 detects netting at runtime anyway.
 
 ## Unverified facts (must be tested on Exness demo via MetaApi, Phase 3)

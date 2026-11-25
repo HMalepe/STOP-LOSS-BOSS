@@ -30,10 +30,10 @@ The UI branch (`claude/determined-mccarthy-kgq7ml`) is merged in up to f2132c6; 
 - Merge note: UI moved the DB singleton to globalThis; `startedDb()` now returns `shared.db`.
 
 ## Next session should start by
-1. M4 (next): presets CRUD (OD3) + fire = fresh preview from the recipe (R9.6). Owner decision pending: no-SL
-   batches are refused by the risk cap.
+1. M4 (next): presets CRUD (OD3) + fire = fresh preview from the recipe (R9.6). Owner decisions made 2026-11-25: no-SL batches allowed
+   (risk null + warning), Q3 = no per-execute TOTP.
 2. M4: presets CRUD. UI can use `/api/settings/caps`, `/api/admin/metrics`.
 
 ## State check
-- `pnpm verify`: green (975 passed, 1 skipped). Load: 0 duplicates.
+- `pnpm verify`: green (979 passed, 1 skipped). Load: 0 duplicates.
 - Uncommitted changes: none after this note.
