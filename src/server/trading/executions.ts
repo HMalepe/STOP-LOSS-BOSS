@@ -144,14 +144,27 @@ export async function reconcileRestartedEntries(
   broker: Pick<BrokerProvider, "reconcile">,
 ): Promise<{ checked: number; found: number }> {
   try {
-    const rows = await db.query<{ execution_id: string; idx: number; target_id: string }>(
-      "select execution_id, idx, target_id from execution_items where state = 'unknown' and op in ('market', 'pending') and message = $1",
+    // The batch magic comes from the stored plan's item at the same index (R9.1: magic AND clientId together).
+    const rows = await db.query<{
+      execution_id: string;
+      idx: number;
+      target_id: string;
+      magic: string | null;
+    }>(
+      "select ei.execution_id, ei.idx, ei.target_id, (p.items -> ei.idx) ->> 'magic' as magic from execution_items ei join executions e on e.id = ei.execution_id join plans p on p.id = e.plan_id where ei.state = 'unknown' and ei.op in ('market', 'pending') and ei.message = $1",
       [UNKNOWN_RESTART],
     );
     if (rows.length === 0) return { checked: 0, found: 0 };
-    const where = await broker.reconcile(rows.map((r) => r.target_id));
+    // An item whose plan can't tell us its magic can't be matched safely: it stays unknown.
+    const keyed = rows.flatMap((r) =>
+      Number.isSafeInteger(Number(r.magic)) && r.magic !== null
+        ? [{ r, key: { clientId: r.target_id, magic: Number(r.magic) } }]
+        : [],
+    );
+    if (keyed.length === 0) return { checked: 0, found: 0 };
+    const where = await broker.reconcile(keyed.map((k) => k.key));
     let found = 0;
-    for (const r of rows) {
+    for (const { r } of keyed) {
       const w = where.get(r.target_id);
       if (w === undefined) continue;
       const [state, message] =
@@ -168,7 +181,7 @@ export async function reconcileRestartedEntries(
         [r.execution_id, r.idx, state, message, UNKNOWN_RESTART],
       );
     }
-    return { checked: rows.length, found };
+    return { checked: keyed.length, found };
   } catch {
     return { checked: 0, found: 0 };
   }

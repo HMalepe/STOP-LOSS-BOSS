@@ -22,9 +22,10 @@ import {
   type TradeResult,
   type Lenient,
   type MarginQuery,
+  type ReconcileKey,
   type Unreadable,
 } from "./BrokerProvider";
-import { reconcileFrom } from "./reconcile";
+import { entryKey, reconcileFrom } from "./reconcile";
 import { classify, codeName, LOCAL_CODE, RETCODE, type BrokerOp } from "./retcodes";
 
 /** Deterministic PRNG (mulberry32). */
@@ -437,15 +438,16 @@ export class MockBroker implements BrokerProvider {
     );
   }
 
-  async reconcile(clientIds: readonly string[]): Promise<ReadonlyMap<string, Reconciled>> {
+  async reconcile(keys: readonly ReconcileKey[]): Promise<ReadonlyMap<string, Reconciled>> {
     const [positions, orders] = await Promise.all([this.getPositions(), this.getOrders()]);
-    return reconcileFrom(clientIds, positions, orders, this.#inFlight);
+    return reconcileFrom(keys, positions, orders, this.#inFlight);
   }
 
   /** Test control: pretend a market order with this clientId is still being processed. */
-  setInFlight(clientId: string, inFlight: boolean): void {
-    if (inFlight) this.#inFlight.add(clientId);
-    else this.#inFlight.delete(clientId);
+  setInFlight(clientId: string, inFlight: boolean, magic = 0): void {
+    const k = entryKey(magic, clientId);
+    if (inFlight) this.#inFlight.add(k);
+    else this.#inFlight.delete(k);
   }
 
   close(): Promise<void> {
@@ -510,13 +512,13 @@ export class MockBroker implements BrokerProvider {
       if (delay === 0) return finish(LOCAL_CODE.ADAPTER_TIMEOUT, { settled: Promise.resolve(real) });
       // It landed at the broker, but nobody can see it yet: hidden from reads, "in flight" for reconcile.
       const ticket = real.positionId ?? real.orderId ?? "";
-      const clientId = target;
+      const flightKey = entryKey((args as { magic: number }).magic, target);
       this.#hidden.add(ticket);
-      this.#inFlight.add(clientId);
+      this.#inFlight.add(flightKey);
       const settled: Promise<TradeResult> = Number.isFinite(delay)
         ? (this.#opts.sleep ?? (() => Promise.resolve()))(delay).then(() => {
             this.#hidden.delete(ticket);
-            this.#inFlight.delete(clientId);
+            this.#inFlight.delete(flightKey);
             return real;
           })
         : new Promise<TradeResult>(() => undefined);

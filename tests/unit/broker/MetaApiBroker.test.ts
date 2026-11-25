@@ -694,7 +694,7 @@ describe("close-now hardening and reconcile (trading-systems review)", () => {
 
   it("reconcile finds positions, pending orders and in-flight market orders by clientId", async () => {
     const conn = fake();
-    conn.terminalState.positions = [{ ...rawPosition, clientId: "cP" }];
+    conn.terminalState.positions = [{ ...rawPosition, clientId: "cP", magic: 5 }];
     conn.terminalState.orders = [
       {
         id: 21,
@@ -703,10 +703,20 @@ describe("close-now hardening and reconcile (trading-systems review)", () => {
         openPrice: 1.08,
         volume: 0.1,
         clientId: "cO",
+        magic: 5,
       },
-      { id: 22, type: "ORDER_TYPE_BUY", symbol: "EURUSD", openPrice: 1.08, volume: 0.1, clientId: "cF" },
+      {
+        id: 22,
+        type: "ORDER_TYPE_BUY",
+        symbol: "EURUSD",
+        openPrice: 1.08,
+        volume: 0.1,
+        clientId: "cF",
+        magic: 5,
+      },
     ];
-    const r = await new MetaApiBroker(conn).reconcile(["cP", "cO", "cF", "cX"]);
+    const k = (clientId: string, magic = 5) => ({ clientId, magic });
+    const r = await new MetaApiBroker(conn).reconcile([k("cP"), k("cO"), k("cF"), k("cX")]);
     expect([...r.entries()]).toEqual([
       ["cP", { status: "position", positionIds: ["11"] }],
       ["cO", { status: "order", orderIds: ["21"] }],
@@ -715,8 +725,39 @@ describe("close-now hardening and reconcile (trading-systems review)", () => {
     ]);
   });
 
+  it("R9.1: a clientId hit under a DIFFERENT batch magic is not a match (position, order, in flight)", async () => {
+    const conn = fake();
+    conn.terminalState.positions = [{ ...rawPosition, clientId: "cP", magic: 5 }];
+    conn.terminalState.orders = [
+      {
+        id: 21,
+        type: "ORDER_TYPE_BUY_LIMIT",
+        symbol: "EURUSD",
+        openPrice: 1.08,
+        volume: 0.1,
+        clientId: "cO",
+        magic: 5,
+      },
+      {
+        id: 22,
+        type: "ORDER_TYPE_BUY",
+        symbol: "EURUSD",
+        openPrice: 1.08,
+        volume: 0.1,
+        clientId: "cF",
+        magic: 5,
+      },
+    ];
+    const r = await new MetaApiBroker(conn).reconcile(
+      ["cP", "cO", "cF"].map((clientId) => ({ clientId, magic: 6 })),
+    );
+    expect([...r.values()]).toEqual([{ status: "notFound" }, { status: "notFound" }, { status: "notFound" }]);
+  });
+
   it("reconcile refuses a stale stream", async () => {
-    await expect(new MetaApiBroker(fake({ synchronized: false })).reconcile(["x"])).rejects.toMatchObject({
+    await expect(
+      new MetaApiBroker(fake({ synchronized: false })).reconcile([{ clientId: "x", magic: 1 }]),
+    ).rejects.toMatchObject({
       kind: "NOT_CONNECTED",
     });
   });

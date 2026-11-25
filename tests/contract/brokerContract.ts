@@ -140,11 +140,16 @@ export function brokerContract(
         expect(pos!.magic).toBe(CONTRACT_MAGIC);
         // [T] clientId round-trips (R6.5 reconciliation depends on it), and reconcile finds it through the interface.
         expect(pos!.clientId).toBe("ct0001");
-        expect((await t.broker.reconcile(["ct0001", "ct-none"])).get("ct0001")).toEqual({
+        const key = (clientId: string, magic = CONTRACT_MAGIC) => ({ clientId, magic });
+        expect((await t.broker.reconcile([key("ct0001"), key("ct-none")])).get("ct0001")).toEqual({
           status: "position",
           positionIds: [id],
         });
-        expect((await t.broker.reconcile(["ct-none"])).get("ct-none")).toEqual({ status: "notFound" });
+        expect((await t.broker.reconcile([key("ct-none")])).get("ct-none")).toEqual({ status: "notFound" });
+        // R9.1: the same clientId under another batch's magic must NOT match.
+        expect((await t.broker.reconcile([key("ct0001", CONTRACT_MAGIC + 1)])).get("ct0001")).toEqual({
+          status: "notFound",
+        });
         expect(toPoints(pos!.sl!, spec)).toBe(toPoints(sl, spec));
         expect(pos!.tp).toBeNull();
 

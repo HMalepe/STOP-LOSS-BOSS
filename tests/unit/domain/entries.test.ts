@@ -1,6 +1,13 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { buildMarketBatch, type BatchIdentity, type MarketBatchRequest } from "@/domain/entries";
+import {
+  buildMarketBatch,
+  entryClientId,
+  identityFromSeq,
+  MAX_BATCH_ORDERS,
+  type BatchIdentity,
+  type MarketBatchRequest,
+} from "@/domain/entries";
 import { toPoints } from "@/domain/price";
 import { EURUSD, US30, XAUUSD, quote } from "./fixtures";
 
@@ -28,7 +35,7 @@ describe("OD1 bulk market entries", () => {
   it("N identical orders, each carrying the batch magic, a human comment and a unique clientId (R9.1)", () => {
     const p = ok(build());
     expect(p.items).toHaveLength(3);
-    expect(p.items.map((i) => i.clientId)).toEqual(["p7Xa0", "p7Xa1", "p7Xa2"]);
+    expect(p.items.map((i) => i.clientId)).toEqual(["p7Xa000", "p7Xa001", "p7Xa002"]);
     for (const i of p.items) {
       expect(i).toMatchObject({
         op: "market",
@@ -138,10 +145,10 @@ describe("OD1 bulk market entries", () => {
   });
 
   it("R9.1: comment + clientId must fit MetaApi's 26 characters, checked with the largest index", () => {
-    // "OD:" + 12 = 15, plus "yyyyyyyyy" + "99" = 11 → 26 fits; one more character doesn't.
-    const fits: BatchIdentity = { ...ID, batchShort: "x".repeat(12), planShort: "y".repeat(9) };
+    // "OD:" + 12 = 15, plus "yyyyyyyy" + "099" = 11 → 26 fits; one more character doesn't.
+    const fits: BatchIdentity = { ...ID, batchShort: "x".repeat(12), planShort: "y".repeat(8) };
     expect(buildMarketBatch(req({ count: 100 }), snap, fits, CAPS).ok).toBe(true);
-    const long: BatchIdentity = { ...fits, planShort: "y".repeat(10) };
+    const long: BatchIdentity = { ...fits, planShort: "y".repeat(9) };
     const r = buildMarketBatch(req({ count: 100 }), snap, long, CAPS);
     expect(!r.ok && r.error.code).toBe("VALIDATION");
   });
@@ -156,6 +163,44 @@ describe("OD1 bulk market entries", () => {
     for (const magic of [0, -1, 2 ** 53]) {
       expect(buildMarketBatch(req(), snap, { ...ID, magic }, CAPS).ok, String(magic)).toBe(false);
     }
+  });
+
+  it("R9.1: batches can never share a clientId (the review's collision: seq 10 item 10 vs seq 361 item 0)", () => {
+    expect(entryClientId(identityFromSeq(7731, 10), 10)).not.toBe(
+      entryClientId(identityFromSeq(7731, 361), 0),
+    );
+    expect(entryClientId(identityFromSeq(7731, 10), 10)).toBe("a010");
+    expect(entryClientId(identityFromSeq(7731, 361), 0)).toBe("a1000");
+  });
+
+  it("R9.1 property: (seq, index) → clientId is injective over many batches; magic decodes back to the seq", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 999_999_999 }),
+        fc.integer({ min: 1, max: 999_999_999 }),
+        fc.integer({ min: 0, max: MAX_BATCH_ORDERS - 1 }),
+        fc.integer({ min: 0, max: MAX_BATCH_ORDERS - 1 }),
+        (s1, s2, i1, i2) => {
+          const a = entryClientId(identityFromSeq(7731, s1), i1);
+          const b = entryClientId(identityFromSeq(7731, s2), i2);
+          if (s1 !== s2 || i1 !== i2) expect(a).not.toBe(b);
+          expect(identityFromSeq(7731, s1).magic % 1e9).toBe(s1);
+          expect(Math.floor(identityFromSeq(7731, s1).magic / 1e9)).toBe(7731);
+        },
+      ),
+      { numRuns: 2_000 },
+    );
+  });
+
+  it("R9.1: a batch is capped at 1000 orders (3-digit index); bad sequences throw (a bug, not input)", () => {
+    expect(() => identityFromSeq(7731, 0)).toThrow(RangeError);
+    expect(() => identityFromSeq(7731, 1_000_000_000)).toThrow(RangeError);
+    expect(() => identityFromSeq(0, 1)).toThrow(RangeError);
+    const r = buildMarketBatch(req({ count: 1001 }), snap, ID, {
+      maxOrdersPerAction: 5000,
+      maxTotalLots: 1e6,
+    });
+    expect(!r.ok && r.error.message).toBe("A batch can carry at most 1000 orders.");
   });
 
   it("property: every item of an accepted plan carries exactly the requested stop, valid against the closing side", () => {

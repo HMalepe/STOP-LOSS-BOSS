@@ -505,13 +505,21 @@ describe("MT5 fidelity fixes (trading-systems review)", () => {
       sl: null,
       tp: null,
     });
-    b.setInFlight("cF", true);
-    const r = await b.reconcile(["cP", "cO", "cF", "cX"]);
+    b.setInFlight("cF", true, tag.magic);
+    const k = (clientId: string, magic = tag.magic) => ({ clientId, magic });
+    const r = await b.reconcile([k("cP"), k("cO"), k("cF"), k("cX")]);
     expect(r.get("cP")?.status).toBe("position");
     expect(r.get("cO")?.status).toBe("order");
     expect(r.get("cF")).toEqual({ status: "inFlight" });
     expect(r.get("cX")).toEqual({ status: "notFound" });
-    b.setInFlight("cF", false);
-    expect((await b.reconcile(["cF"])).get("cF")).toEqual({ status: "notFound" });
+    // R9.1: the same clientId under ANOTHER batch's magic is not a match, for positions, orders and in-flight alike.
+    const other = await b.reconcile([k("cP", tag.magic + 1), k("cO", tag.magic + 1), k("cF", tag.magic + 1)]);
+    expect([...other.values()]).toEqual([
+      { status: "notFound" },
+      { status: "notFound" },
+      { status: "notFound" },
+    ]);
+    b.setInFlight("cF", false, tag.magic);
+    expect((await b.reconcile([k("cF")])).get("cF")).toEqual({ status: "notFound" });
   });
 });

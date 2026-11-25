@@ -327,6 +327,8 @@ async function resolveEntry(
   ctx: RunContext,
 ): Promise<Next> {
   const clientId = targetOf(item);
+  // Only entries are ever resolved here; their request carries the batch magic.
+  const magic = item.op === "market" || item.op === "pending" ? item.req.magic : 0;
   let definitelyNotPlaced = false;
 
   ctx.yieldWorker?.();
@@ -346,7 +348,8 @@ async function resolveEntry(
     if (poll > 0) await ctx.scheduler.sleep(ctx.policy.reconcileIntervalMs);
     let found;
     try {
-      found = (await ctx.broker.reconcile([clientId])).get(clientId);
+      // R9.1: batch magic AND clientId together; a clientId hit alone is never accepted.
+      found = (await ctx.broker.reconcile([{ clientId, magic }])).get(clientId);
     } catch (e) {
       return {
         kind: "end",

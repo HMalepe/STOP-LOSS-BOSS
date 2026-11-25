@@ -43,6 +43,31 @@ export interface MarketBatchRequest {
   readonly takeProfit?: EntryLevel | undefined;
 }
 
+/** Most orders one batch may carry: the clientId index is exactly 3 digits (R9.1). */
+export const MAX_BATCH_ORDERS = 1000;
+
+/**
+ * R9.1: every id of a batch derives from its sequence number.
+ *   magic    = prefix × 10^9 + seq        (seq < 10^9, so the result stays below 2^53)
+ *   comment  = "OD:" + base36(seq)
+ *   clientId = base36(seq) + index as exactly 3 digits
+ * The index is fixed-width, so the last 3 characters are always the index and the rest is always the seq: two
+ * different batches can never produce the same clientId. (Unpadded, seq 10 item 10 and seq 361 item 0 are both "a10".)
+ */
+export function identityFromSeq(prefix: number, seq: number): BatchIdentity {
+  if (!Number.isSafeInteger(prefix) || prefix < 1) {
+    throw new RangeError("magic prefix must be a positive integer");
+  }
+  if (!Number.isSafeInteger(seq) || seq < 1 || seq >= 1_000_000_000) {
+    throw new RangeError("batch seq out of range");
+  }
+  const short = seq.toString(36);
+  return { magic: prefix * 1_000_000_000 + seq, batchShort: short, planShort: short };
+}
+
+export const entryClientId = (id: BatchIdentity, index: number): string =>
+  `${id.planShort}${String(index).padStart(3, "0")}`;
+
 /** R9.1, allocated by the server: magic = APP_MAGIC_PREFIX × 10^9 + batchSeq. */
 export interface BatchIdentity {
   readonly magic: number;
@@ -127,7 +152,8 @@ function checkData(
 /** R9.1: magic sane, and comment + the longest clientId (the last index) fit MetaApi's 26 characters. */
 function identityProblem(id: BatchIdentity, count: number): string | null {
   if (!Number.isSafeInteger(id.magic) || id.magic <= 0) return "Batch magic must be a positive safe integer.";
-  if (`OD:${id.batchShort}`.length + `${id.planShort}${String(count - 1)}`.length > MAX_TAG_CHARS) {
+  if (count > MAX_BATCH_ORDERS) return `A batch can carry at most ${String(MAX_BATCH_ORDERS)} orders.`;
+  if (`OD:${id.batchShort}`.length + entryClientId(id, count - 1).length > MAX_TAG_CHARS) {
     return "Batch tag too long for MetaApi (comment + clientId > 26 characters).";
   }
   return null;
@@ -176,14 +202,9 @@ export function buildMarketBatch(
     return invalid(`${String(totalLots)} lots in total is over your cap of ${String(caps.maxTotalLots)}.`);
   }
 
-  // R9.1: the longest clientId is the last one.
+  const tag = identityProblem(id, req.count);
+  if (tag !== null) return invalid(tag);
   const comment = `OD:${id.batchShort}`;
-  if (comment.length + `${id.planShort}${String(req.count - 1)}`.length > MAX_TAG_CHARS) {
-    return invalid("Batch tag too long for MetaApi (comment + clientId > 26 characters).");
-  }
-  if (!Number.isSafeInteger(id.magic) || id.magic <= 0) {
-    return invalid("Batch magic must be a positive safe integer.");
-  }
 
   const m = marketFrom(spec, quote);
   const sl = resolveLevel(req.side, "SL", req.stopLoss, m);
@@ -221,7 +242,7 @@ export function buildMarketBatch(
     tp: tpPrice,
     magic: id.magic,
     comment,
-    clientId: `${id.planShort}${String(i)}`,
+    clientId: entryClientId(id, i),
   }));
   return {
     ok: true,
@@ -410,7 +431,7 @@ export function buildLadder(
       tp: tp === null ? null : fromPoints(points(tp), spec),
       magic: id.magic,
       comment: `OD:${id.batchShort}`,
-      clientId: `${id.planShort}${String(i)}`,
+      clientId: entryClientId(id, i),
     });
   }
   if (bad.length > 0) {

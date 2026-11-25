@@ -117,12 +117,12 @@ export const metaApiOrder = z
 
 /** Market orders still being processed (ORDER_TYPE_BUY/SELL in the orders list): only what R6.5 needs. */
 export const metaApiInFlight = z
-  .object({ id, type: z.string(), clientId: z.string().optional() })
-  .transform((o) =>
+  .object({ id, type: z.string(), clientId: z.string().optional(), magic: z.number().optional() })
+  .transform((o): { clientId: string; magic: number } | null =>
     (o.type === "ORDER_TYPE_BUY" || o.type === "ORDER_TYPE_SELL") &&
     o.clientId !== undefined &&
     o.clientId !== ""
-      ? o.clientId
+      ? { clientId: o.clientId, magic: o.magic ?? 0 }
       : null,
   );
 

@@ -18,8 +18,9 @@ import {
   type TradeResult,
   type Lenient,
   type MarginQuery,
+  type ReconcileKey,
 } from "../BrokerProvider";
-import { reconcileFrom } from "../reconcile";
+import { entryKey, reconcileFrom } from "../reconcile";
 import { classify, codeName, LOCAL_CODE, RETCODE, type BrokerOp } from "../retcodes";
 import {
   metaApiAccount,
@@ -245,7 +246,7 @@ export class MetaApiBroker implements BrokerProvider {
   }
 
   /** R6.5 / ADR-0009: where did each clientId end up? Includes market orders still in flight. */
-  reconcile(clientIds: readonly string[]): Promise<ReadonlyMap<string, Reconciled>> {
+  reconcile(keys: readonly ReconcileKey[]): Promise<ReadonlyMap<string, Reconciled>> {
     return this.#read(() => {
       const ts = this.#conn.terminalState;
       const positions = parseList(metaApiPosition, ts.positions, "positions");
@@ -254,9 +255,11 @@ export class MetaApiBroker implements BrokerProvider {
         (o): o is PendingOrder => o !== null,
       );
       const inFlight = new Set(
-        parseList(metaApiInFlight, rawOrders, "orders").filter((c): c is string => c !== null),
+        parseList(metaApiInFlight, rawOrders, "orders").flatMap((o) =>
+          o === null ? [] : [entryKey(o.magic, o.clientId)],
+        ),
       );
-      return reconcileFrom(clientIds, positions, orders, inFlight);
+      return reconcileFrom(keys, positions, orders, inFlight);
     });
   }
 

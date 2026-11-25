@@ -326,8 +326,17 @@ describe("profit is the open part, net of swap and commission (SDK docs)", () =>
 
 describe("in-flight market orders (R6.5)", () => {
   it("only market orders with a clientId count", () => {
-    expect(parseOne(metaApiInFlight, { id: 1, type: "ORDER_TYPE_BUY", clientId: "c1" }, "o")).toBe("c1");
-    expect(parseOne(metaApiInFlight, { id: 1, type: "ORDER_TYPE_SELL", clientId: "c2" }, "o")).toBe("c2");
+    expect(
+      parseOne(metaApiInFlight, { id: 1, type: "ORDER_TYPE_BUY", clientId: "c1", magic: 9 }, "o"),
+    ).toEqual({
+      clientId: "c1",
+      magic: 9,
+    });
+    // No magic on the row reads as 0 (a manual trade): it can never match an app batch (magic > 0).
+    expect(parseOne(metaApiInFlight, { id: 1, type: "ORDER_TYPE_SELL", clientId: "c2" }, "o")).toEqual({
+      clientId: "c2",
+      magic: 0,
+    });
     expect(
       parseOne(metaApiInFlight, { id: 1, type: "ORDER_TYPE_BUY_LIMIT", clientId: "c3" }, "o"),
     ).toBeNull();

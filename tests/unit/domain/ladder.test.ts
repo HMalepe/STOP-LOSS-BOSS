@@ -33,7 +33,7 @@ describe("OD2 pending ladder", () => {
   it("R5.4 count mode: A to B inclusive, evenly spaced, tagged per R9.1", () => {
     const p = ok(build());
     expect(p.items.map((i) => i.openPrice)).toEqual([1.085, 1.084, 1.083, 1.082, 1.081, 1.08]);
-    expect(p.items.map((i) => i.clientId)).toEqual(["q90", "q91", "q92", "q93", "q94", "q95"]);
+    expect(p.items.map((i) => i.clientId)).toEqual(["q9000", "q9001", "q9002", "q9003", "q9004", "q9005"]);
     for (const i of p.items) {
       expect(i).toMatchObject({
         op: "pending",

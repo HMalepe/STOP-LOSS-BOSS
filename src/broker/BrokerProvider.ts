@@ -99,6 +99,15 @@ export class BrokerError extends Error {
   }
 }
 
+/**
+ * R9.1: an entry is looked up by batch magic AND clientId together. A hit on clientId alone is never accepted: another
+ * batch's order could share it. The result map is keyed by clientId (unique within one batch).
+ */
+export interface ReconcileKey {
+  readonly clientId: string;
+  readonly magic: number;
+}
+
 /** R6.5 / ADR-0009: where an entry with this clientId ended up. */
 export type Reconciled =
   | { readonly status: "position"; readonly positionIds: readonly [string, ...string[]] }
@@ -150,6 +159,6 @@ export interface BrokerProvider {
   placePending(req: PendingOrderReq): Promise<TradeResult>;
   cancelOrder(orderId: string): Promise<TradeResult>;
   /** R6.5: look up entries by clientId, including market orders still in flight. Throws if the state isn't trustworthy. */
-  reconcile(clientIds: readonly string[]): Promise<ReadonlyMap<string, Reconciled>>;
+  reconcile(keys: readonly ReconcileKey[]): Promise<ReadonlyMap<string, Reconciled>>;
   close(): Promise<void>;
 }

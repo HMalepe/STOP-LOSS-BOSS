@@ -98,7 +98,7 @@ describe("OD1 market batch: preview → execute", () => {
     const magic = (items[0] as { magic: number }).magic;
     expect(Math.floor(magic / 1e9)).toBe(7731);
     expect(items.map((i) => (i as { clientId: string }).clientId)).toEqual(
-      ["0", "1", "2"].map((n) => `${(magic % 1e9).toString(36)}${n}`),
+      ["000", "001", "002"].map((n) => `${(magic % 1e9).toString(36)}${n}`),
     );
 
     const before = (await broker.getPositions()).length;

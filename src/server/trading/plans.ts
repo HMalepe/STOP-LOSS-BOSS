@@ -11,6 +11,7 @@ import { buildPlan, type PlanDraft, type PlanError, type PlanRequest } from "@/d
 import {
   buildLadder,
   buildMarketBatch,
+  identityFromSeq,
   type BatchIdentity,
   type MarketEntryItem,
   type PendingEntryItem,
@@ -321,10 +322,7 @@ export async function loadPlan(db: Db, userId: string, id: string): Promise<Stor
 /** R9.1: one fresh batch per preview. magic = prefix × 10^9 + seq; the short tag is seq in base 36 (≤ 6 chars). */
 export async function allocateBatch(db: Db, prefix: number): Promise<BatchIdentity> {
   const [row] = await db.query<{ seq: string | number }>("select nextval('batch_seq') as seq");
-  const seq = Number(row?.seq);
-  if (!Number.isSafeInteger(seq) || seq < 1) throw new Error("batch sequence returned no value");
-  const short = seq.toString(36);
-  return { magic: prefix * 1_000_000_000 + seq, batchShort: short, planShort: short };
+  return identityFromSeq(prefix, Number(row?.seq));
 }
 
 const ENTRIES_NEED_HEDGING =

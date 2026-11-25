@@ -151,6 +151,13 @@ describe("after a restart: entries caught mid-send are looked up by clientId (AD
     const plan = await preview();
     await new DbExecutionStore(s.db, s.clock).claim(plan.id, EX, []);
     const tag = { magic: 7_731_000_000_777, comment: "OD:lr" };
+    // The stored plan is where recovery reads each entry's batch magic from (R9.1).
+    await s.db.query("update plans set items = $2::jsonb where id = $1", [
+      plan.id,
+      JSON.stringify(
+        ["lr0", "lr1", "lr2", "lr3"].map((clientId) => ({ op: "market", clientId, magic: tag.magic })),
+      ),
+    ]);
     await broker.placeMarket({
       symbol: "EURUSD",
       side: "BUY",
@@ -170,7 +177,7 @@ describe("after a restart: entries caught mid-send are looked up by clientId (AD
       ...tag,
       clientId: "lr1",
     });
-    broker.setInFlight("lr3", true);
+    broker.setInFlight("lr3", true, tag.magic);
     const rows: [number, string, string][] = [
       [0, "market", "lr0"],
       [1, "pending", "lr1"],
@@ -195,11 +202,55 @@ describe("after a restart: entries caught mid-send are looked up by clientId (AD
     expect(await reconcileRestartedEntries(s.db, broker)).toEqual({ checked: 0, found: 0 });
   });
 
+  it("R9.1: another batch's order with the SAME clientId is not mistaken for ours (lost entry stays unknown)", async () => {
+    const { reconcileRestartedEntries, UNKNOWN_RESTART } = await import("@/server/trading/executions");
+    const { broker } = mockServices(s.db, s.clock);
+    const plan = await preview();
+    await new DbExecutionStore(s.db, s.clock).claim(plan.id, EX, []);
+    await s.db.query("update plans set items = $2::jsonb where id = $1", [
+      plan.id,
+      JSON.stringify([{ op: "market", clientId: "a010", magic: 7_731_000_000_010 }]),
+    ]);
+    // A DIFFERENT batch (magic ...361) has an open position carrying the very same clientId.
+    await broker.placeMarket({
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 0.01,
+      sl: 1.08,
+      tp: null,
+      magic: 7_731_000_000_361,
+      comment: "OD:a1",
+      clientId: "a010",
+    });
+    await s.db.query(
+      "insert into execution_items (execution_id, idx, op, target_id, state, message) values ($1, 0, 'market', 'a010', 'unknown', $2)",
+      [EX, UNKNOWN_RESTART],
+    );
+    expect(await reconcileRestartedEntries(s.db, broker)).toEqual({ checked: 1, found: 0 });
+    expect((await items(EX))[0]?.state).toBe("unknown");
+  });
+
+  it("an item whose stored plan has no magic can't be matched safely: left unknown, never guessed", async () => {
+    const { reconcileRestartedEntries, UNKNOWN_RESTART } = await import("@/server/trading/executions");
+    const { broker } = mockServices(s.db, s.clock);
+    const plan = await preview();
+    await new DbExecutionStore(s.db, s.clock).claim(plan.id, EX, []);
+    await s.db.query(
+      "insert into execution_items (execution_id, idx, op, target_id, state, message) values ($1, 0, 'market', 'z', 'unknown', $2)",
+      [EX, UNKNOWN_RESTART],
+    );
+    expect(await reconcileRestartedEntries(s.db, broker)).toEqual({ checked: 0, found: 0 });
+  });
+
   it("a broker that can't answer changes nothing and never throws", async () => {
     const { reconcileRestartedEntries, UNKNOWN_RESTART } = await import("@/server/trading/executions");
     const { broker } = mockServices(s.db, s.clock);
     const plan = await preview();
     await new DbExecutionStore(s.db, s.clock).claim(plan.id, EX, []);
+    await s.db.query("update plans set items = $2::jsonb where id = $1", [
+      plan.id,
+      JSON.stringify([{ op: "market", clientId: "z0", magic: 7_731_000_000_001 }]),
+    ]);
     await s.db.query(
       "insert into execution_items (execution_id, idx, op, target_id, state, message) values ($1, 0, 'market', 'z0', 'unknown', $2)",
       [EX, UNKNOWN_RESTART],
