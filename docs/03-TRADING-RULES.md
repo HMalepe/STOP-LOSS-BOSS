@@ -145,19 +145,37 @@ At execute time, re-read the quote. If any item's validity flipped since preview
 - R8.5 Parameters: break-even offset N is an integer ≥ 0 (0 = exact entry price); lock distance N is an integer ≥ 1. Both exclude swaps and commission.
 
 ## §9 Order Desk (batch identity, risk, guards)
+Field names below were verified 2026-11-25 from `metaapi.cloud-sdk@29.3.4` (see 09-PERFORMANCE "MetaApi SDK contract"). [T] = confirm on the Exness demo.
 - R9.1 **Batch identity (ADR-0005).** Every order from a batch carries:
-  - `magic = APP_MAGIC_PREFIX × 10^9 + batchSeq` (batchSeq < 10^9; result stays below 2^53 so JS numbers are exact). App-owned = `floor(magic / 10^9) === APP_MAGIC_PREFIX`. [T] confirm MetaApi accepts `magic` on market and pending orders.
-  - `comment = "OD:" + batchShort` (human-readable only, never used to match).
-  - `clientId = <planShort><itemIndex>` for reconciliation (R6.5).
-  - [V] MetaApi: `comment` + `clientId` together must be **≤ 26 characters**. Enforce it in the plan builder, with a test.
+  - `magic = APP_MAGIC_PREFIX × 10^9 + batchSeq` (batchSeq < 10^9; result stays below 2^53 so JS numbers are exact). App-owned = `floor(magic / 10^9) === APP_MAGIC_PREFIX`.
+    `batchSeq` comes from a database sequence: atomic, never reused, allocated when the plan is stored (so a batch keeps its id even if it's retried).
+    [T] MetaApi accepts `magic` in `TradeOptions` on market and pending orders and returns `magic` on positions and orders.
+  - `comment = "OD:" + base36(batchSeq)` (≤ 9 chars; human-readable only, never used to match).
+  - `clientId = <planShort><index>`: `planShort` = first 6 hex chars of the plan id, `index` = the item's zero-based index, decimal, 3 digits (R6.5 reconciliation key; the cap of 500 orders per action fits).
+  - [V] `comment` + `clientId` together ≤ 26 characters (`TradeOptions`). With the formats above the maximum is 9 + 9 = 18. The plan builder asserts it for every item and refuses the plan otherwise, with a test.
   - Matching is always on `magic`. Comments can be truncated or rewritten by the broker; magic is a number set once at entry.
-- R9.2 Risk to SL per order = |entry − SL| / tickSize × tickValue × lots. Verify MetaApi/MT5 field names for tick value. Never guess.
-- R9.3 Margin check uses the broker's margin calculation if MetaApi exposes it; otherwise block with "can't verify margin" rather than estimate (owner may override per action in demo only).
-- R9.4 Spread guard compares (ask − bid) in points at **execute** time, not preview time. Two checks; either one refuses the whole batch with zero broker calls:
+- R9.2 **Risk to SL.** Per order = |entry − SL| ÷ `tickSize` × `lossTickValue` × lots, in account currency.
+  - [V] `lossTickValue` (and `profitTickValue`) live on the **price** feed (`MetatraderSymbolPrice`), not on the symbol specification; `Quote` carries `lossTickValue` for this.
+    It is the value of one tick of loss for one lot in account currency, as the broker computes it.
+  - `entry` is the expected fill (buy: ask, sell: bid; pending: its own level). Money is rounded to cents.
+  - If `lossTickValue` is missing, not finite or ≤ 0, risk can't be verified: **block** ("can't verify risk"), never guess.
+  - Total risk = Σ per order. **R9.2a (cap):** total risk ≤ `MAX_RISK_PCT_PER_ACTION`% of account **equity** at preview. Over → reject, showing both numbers.
+  - **R9.2b (no stop):** a batch must have an SL unless the owner explicitly chose "no stop" (`noStop: true`). With `noStop`, risk is shown as **unlimited**, the cap in R9.2a is skipped (R5.2's lot and count caps still apply), and the preview carries an amber warning. An SL that was requested is never dropped (R5.3).
+- R9.3 **Margin check** uses the broker's own number: `calculateMargin({ symbol, type, volume, openPrice })` → `{ margin?: number }`, `margin` undefined when the broker can't compute it.
+  - Market batch: one call with the **total** volume at the expected fill (identical entries, so margin adds up exactly).
+  - Ladder: one call per level, at most 10 distinct (volume, price) calls. Beyond 10, take the highest margin-per-lot among the 10 and multiply by total lots: a conservative **upper bound**, labelled as such in the preview.
+    Hedged offsets can only lower the broker's real figure, so this never under-states the need.
+  - Required margin > `freeMargin` → **block**. Required margin undefined or a failed call → **block** ("can't verify margin"). No estimate, no override on live.
+  - **Warn** (amber, don't block) if `equity ÷ (margin + required)` would fall below 300%.
+  - [T] Credit cost of `calculateMargin` isn't in the published table: measure it on demo. Until then the call count is capped as above, and previews are never fired in a loop.
+- R9.4 **Spread guard** compares (ask − bid) in points at **execute** time, not preview time. Two checks; either one refuses the whole batch with zero broker calls:
   - R9.4a **Absolute:** spread > `SPREAD_MAX_POINTS` (per symbol, optional, off by default).
-  - R9.4b **Adaptive (on by default):** spread > `SPREAD_GUARD_K` (default 3) × the **median** spread of streamed ticks over the last
-    `SPREAD_WINDOW_SEC` (default 300). It works on any symbol without per-symbol tuning (EURUSD and XAUUSD have very different normal spreads)
-    and catches news spikes. If fewer than 30 ticks are in the window, fall back to R9.4a; if that is off too, warn in the preview, don't block.
-  - The preview shows "spread now X pts, normal Y pts".
-- R9.5 Scaled ladder lots: flat = same; increasing/decreasing = linear from lotStart to lotEnd, each rounded down to volumeStep; total shown in preview.
-- R9.6 Preset firing always builds a fresh plan from live quote/spec; presets store recipes, never prices relative to a stale quote (unless absolute-price preset, flagged as such).
+  - R9.4b **Adaptive (on by default):** spread > `SPREAD_GUARD_K` (default 3) × the **median** spread over the last `SPREAD_WINDOW_SEC` (default 300). It works on any symbol without per-symbol tuning and catches news spikes.
+    Samples: the server records `ask − bid` once a second per symbol the owner has opened in the last 10 minutes, from the zero-credit terminal state. Fewer than 30 samples in the window → fall back to R9.4a; if that is off too, **warn** in the preview, don't block.
+  - The preview shows "spread now X pts, normal Y pts". Entries only: closes and modifies are never refused by the spread guard.
+- R9.5 **Scaled ladder lots:** flat = same; increasing / decreasing = linear from `lotStart` to `lotEnd` across the levels, each rounded **down** to `volumeStep` and kept ≥ `volumeMin` (a level that would round below the minimum is **not** bumped up: the plan is refused, naming the level). Total lots shown in the preview and checked against R5.2.
+- R9.6 **Presets** store recipes, never prices relative to a stale quote. Firing always builds a fresh plan from the live quote and spec through the same path as a manual action (preview → confirm → execute). An absolute-price preset is flagged as such and its prices are re-validated (R5.5) against the live market.
+- R9.7 **One path.** Market batches, ladders and presets all produce a normal stored plan (same hash, 30 s expiry, drift guard, idempotent claim). The only new thing at execute is the spread guard (R9.4) and a re-read of free margin (R9.3 vs the stored requirement: if free margin fell below it, refuse). Nothing about entries bypasses §6 or ADR-0009.
+- R9.8 **Entries are not retried blind.** A timed-out entry is reconciled by `clientId` before any retry (R6.5). The batch summary counts *filled*, *failed*, *unknown* separately; a partial batch says so in plain words and offers "retry failed" only for items confirmed absent.
+- R9.9 **Batch management (OD5)** acts on `magic` decoded to `batchSeq` (R1.1): move SL/TP (§2), break-even/lock (§8), close, cancel the remaining pending orders. It selects positions and pending orders with that magic and only those; manual trades (magic 0) and other EAs are never matched.
+
