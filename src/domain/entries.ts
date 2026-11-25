@@ -161,9 +161,21 @@ function identityProblem(id: BatchIdentity, count: number): string | null {
 
 const NO_SL_WARNING = "No stop loss: the loss on these orders is limited only by your account.";
 
-/** R5.1: whole steps, rounded down, computed on integers (0.07 / 0.01 is 7.000000000000001 in floats). */
-function stepsDown(volume: number, step: number): number {
-  return Math.floor(volume / step + 1e-9);
+/** R5.1: the step count if `volume` is exactly on the grid (within 1e-9 of a whole step), else null. */
+function gridSteps(volume: number, step: number): number | null {
+  const n = volume / step;
+  const r = Math.round(n);
+  return Math.abs(n - r) < 1e-9 ? r : null;
+}
+
+const notOnGrid = (v: number, spec: SymbolSpec) =>
+  `${String(v)} isn't a multiple of the lot step ${String(spec.volumeStep)}.`;
+
+/** R5.1: min/max in lots (the minimum need not be a multiple of the step). */
+function lotLimitProblem(volume: number, spec: SymbolSpec): string | null {
+  return volume < spec.volumeMin - 1e-9 || volume > spec.volumeMax + 1e-9
+    ? `Lot ${String(volume)} is outside ${String(spec.volumeMin)}–${String(spec.volumeMax)} for ${spec.symbol}.`
+    : null;
 }
 const lots = (steps: number, step: number) => Number((steps * step).toFixed(8));
 
@@ -183,19 +195,14 @@ export function buildMarketBatch(
     );
   }
 
-  // R5.1
+  // R5.1: a TYPED lot must be on the step grid. Refused, never silently rounded.
   if (!Number.isFinite(req.volume) || req.volume <= 0) return invalid("Lot size must be a positive number.");
-  const steps = stepsDown(req.volume, spec.volumeStep);
+  const steps = gridSteps(req.volume, spec.volumeStep);
+  if (steps === null) return invalid(notOnGrid(req.volume, spec));
   const volume = lots(steps, spec.volumeStep);
-  if (volume < spec.volumeMin || volume > spec.volumeMax) {
-    return invalid(
-      `Lot ${String(volume)} is outside ${String(spec.volumeMin)}–${String(spec.volumeMax)} for ${spec.symbol}.`,
-    );
-  }
+  const outsideLimits = lotLimitProblem(volume, spec);
+  if (outsideLimits !== null) return invalid(outsideLimits);
   const warnings: string[] = [];
-  if (stepsDown(req.volume, spec.volumeStep) * spec.volumeStep + 1e-9 < req.volume) {
-    warnings.push(`Lot rounded down to ${String(volume)} (step ${String(spec.volumeStep)}).`);
-  }
   // R5.2, on integer steps so 10 × 0.5 compares exactly.
   const totalLots = lots(steps * req.count, spec.volumeStep);
   if (totalLots > caps.maxTotalLots + 1e-9) {
@@ -282,7 +289,7 @@ function resolveLevel(
   return roundToTickPoints(fromPoints(points(raw), m.spec), m.spec);
 }
 
-// ─── OD2: pending ladder (R5.4 – R5.6a, R9.5) ─────────────────────────────────────────────────────────────────────
+// ─── OD2: pending ladder (R5.4 – R5.6, R9.5) ─────────────────────────────────────────────────────────────────────
 
 export interface LadderRequest {
   readonly symbol: string;
@@ -392,7 +399,7 @@ export function buildLadder(
     return invalid(`${String(totalLots)} lots in total is over your cap of ${String(caps.maxTotalLots)}.`);
   }
 
-  // R5.5 + R5.6a: every bad level is listed, and any one refuses the ladder.
+  // R5.5 + R5.5b: every bad level is listed, and any one refuses the ladder.
   const type = pendingType(req.side, req.kind);
   const bad: string[] = [];
   const items: PendingEntryItem[] = [];
@@ -402,18 +409,18 @@ export function buildLadder(
       bad.push(`${formatPrice(fromPoints(points(p), spec), spec)}: ${placement}`);
       continue;
     }
-    // R5.6: buy SL below / TP above the level; sell the reverse. R5.6a: ≥ d from the level.
+    // R5.6: buy SL below / TP above the level; sell the reverse. R5.5b: strictly more than d from the level.
     const sl =
       req.slOffsetPoints === undefined ? null : p + (req.side === "BUY" ? -1 : 1) * req.slOffsetPoints;
     const tp =
       req.tpOffsetPoints === undefined ? null : p + (req.side === "BUY" ? 1 : -1) * req.tpOffsetPoints;
     const tooClose = [
-      ...(req.slOffsetPoints !== undefined && req.slOffsetPoints < m.d ? ["SL"] : []),
-      ...(req.tpOffsetPoints !== undefined && req.tpOffsetPoints < m.d ? ["TP"] : []),
+      ...(req.slOffsetPoints !== undefined && req.slOffsetPoints <= m.d ? ["SL"] : []),
+      ...(req.tpOffsetPoints !== undefined && req.tpOffsetPoints <= m.d ? ["TP"] : []),
     ];
     if (tooClose.length > 0) {
       bad.push(
-        `${formatPrice(fromPoints(points(p), spec), spec)}: ${tooClose.join(" and ")} must be at least ${String(m.d)} points from the order price (R5.6a)`,
+        `${formatPrice(fromPoints(points(p), spec), spec)}: ${tooClose.join(" and ")} must be more than ${String(m.d)} points from the order price (R5.5b)`,
       );
       continue;
     }
@@ -486,16 +493,17 @@ function placementProblem(type: LadderType, p: number, m: Market): string | null
 function ladderLots(l: LadderRequest["lots"], n: number, spec: SymbolSpec): number[] | string {
   const [start, end] = l.mode === "flat" ? [l.lot, l.lot] : [l.start, l.end];
   if (![start, end].every((v) => Number.isFinite(v) && v > 0)) return "Lot sizes must be positive numbers.";
-  const s0 = stepsDown(start, spec.volumeStep);
-  const s1 = stepsDown(end, spec.volumeStep);
+  // R5.1: the lots the owner TYPED must be on the grid; only the levels in between are derived (and rounded down).
+  const s0 = gridSteps(start, spec.volumeStep);
+  const s1 = gridSteps(end, spec.volumeStep);
+  if (s0 === null) return notOnGrid(start, spec);
+  if (s1 === null) return notOnGrid(end, spec);
   const out = Array.from({ length: n }, (_, i) =>
     n === 1 ? s0 : Math.floor(s0 + (i * (s1 - s0)) / (n - 1) + 1e-9),
   );
-  const min = stepsDown(spec.volumeMin, spec.volumeStep);
-  const max = stepsDown(spec.volumeMax, spec.volumeStep);
-  const outside = out.find((x) => x < min || x > max);
-  if (outside !== undefined) {
-    return `Lot ${String(lots(outside, spec.volumeStep))} is outside ${String(spec.volumeMin)}–${String(spec.volumeMax)} for ${spec.symbol}.`;
+  for (const steps of out) {
+    const problem = lotLimitProblem(lots(steps, spec.volumeStep), spec);
+    if (problem !== null) return problem;
   }
   return out;
 }
@@ -503,7 +511,7 @@ function ladderLots(l: LadderRequest["lots"], n: number, spec: SymbolSpec): numb
 /**
  * §7 for entries: re-check a stored entry against the market at execute time. Empty = still valid.
  * Market orders: SL/TP vs the closing side (R5.3). Pending: placement vs the market (R5.5); its stops are relative to
- * its own price (R5.6a) and can't have changed.
+ * its own price (R5.5b) and can't have changed.
  */
 export function entryProblems(item: MarketEntryItem | PendingEntryItem, m: Market): string[] {
   if (item.op === "pending") {

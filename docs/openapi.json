@@ -1110,6 +1110,9 @@
                             "additionalProperties": false
                           }
                         ]
+                      },
+                      "noStop": {
+                        "type": "boolean"
                       }
                     },
                     "required": ["action", "symbol", "side", "count", "volume"],
@@ -1214,6 +1217,9 @@
                       },
                       "tpOffsetPoints": {
                         "type": "number"
+                      },
+                      "noStop": {
+                        "type": "boolean"
                       }
                     },
                     "required": ["action", "symbol", "side", "kind", "from", "to", "spacing", "lots"],

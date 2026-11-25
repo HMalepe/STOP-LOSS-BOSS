@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-25: Code aligned to the reviewed §9 (doc wins): R5.1 typed lots must be on the step grid (refused, never rounded); R5.5b stop strictly > d from a pending's own price; R9.1 clientId = base36(seq) + 3-digit index and reconcile matches magic AND clientId (a real cross-batch collision existed); R9.2 rounds each order UP to the cent, COMMISSION_PER_LOT, and R9.2b: no SL only with explicit noStop (this keeps the owner's "allow", it just can't happen by omission)
 - 2026-11-25 (owner): Batches with no SL are ALLOWED. Risk shown as null (unbounded) with the no-SL warning; the % risk cap can't apply, margin still must fit. Supersedes the 2026-11-24 "refuse no-SL" line
 - 2026-11-25 (owner): Q3 no: live execute does not need a fresh authenticator code
 - 2026-11-24: R9.4 spread guard: stream quotes sampled 1/s for 10 min after a symbol is previewed (no credits, bounded); at fire, spread > K × median of the window (≥ 30 ticks) or > SPREAD_MAX_POINTS[symbol] → 409 SPREAD_TOO_WIDE, zero calls. Cold symbol: warn, never block. Entries only

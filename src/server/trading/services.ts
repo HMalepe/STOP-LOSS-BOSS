@@ -48,6 +48,8 @@ export interface TradingServices {
   /** R9.4 spread guard: recent spreads per symbol, K and the optional absolute max per symbol. */
   readonly spread: SpreadMonitor;
   readonly spreadGuard: { readonly k: number; readonly maxPts: Readonly<Record<string, number>> };
+  /** R9.2: commission per lot in account currency, added to the risk (0 unless the account charges it). */
+  readonly commissionPerLot: number;
   /** R9.1 APP_MAGIC_PREFIX: every Order Desk batch's magic is prefix × 10^9 + seq. */
   readonly magicPrefix: number;
   /** The MetaApi account id (the accounts row whose live_enabled counts). null in mock mode. */
@@ -260,6 +262,7 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
     observability,
     capCeilings: capsFromEnv(env),
     magicPrefix: env.APP_MAGIC_PREFIX,
+    commissionPerLot: env.COMMISSION_PER_LOT,
     spread: new SpreadMonitor({
       windowMs: env.SPREAD_WINDOW_SEC * 1_000,
       clock,

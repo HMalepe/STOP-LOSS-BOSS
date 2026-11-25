@@ -76,6 +76,19 @@ describe("R9.2 money at risk to SL = |entry − SL| / tickSize × tickValue × l
     expect(riskToStop(r.plan.items, XAUUSD, { ...g, lossTickValue: 1 })).toMatchObject({ total: 50 });
   });
 
+  it("R9.2: each order's money rounds UP to the cent: 0.9921 is 1.00, not 0.99 (round-then-sum would understate)", () => {
+    // 50 ticks × 0.19842 × 0.1 lot = 0.9921 exactly: nearest-cent says 0.99, the safe answer is 1.00.
+    const r = riskToStop(market({ sl: 50, volume: 0.1, count: 3 }), EURUSD, { ...Q, lossTickValue: 0.19842 });
+    expect(r).toEqual({ ok: true, perOrder: [1, 1, 1], total: 3, unbounded: false });
+  });
+
+  it("R9.2: commission per lot is added to the risk (0 by default)", () => {
+    const base = riskToStop(market({ sl: 150, count: 1 }), EURUSD, { ...Q, lossTickValue: 1 });
+    const withFee = riskToStop(market({ sl: 150, count: 1 }), EURUSD, { ...Q, lossTickValue: 1 }, 7);
+    expect(base.ok && base.total).toBe(15);
+    expect(withFee.ok && withFee.total).toBe(15.7); // + 7 per lot × 0.1 lot
+  });
+
   it("no SL on any order → unbounded (never a number)", () => {
     const r = riskToStop(market({ sl: undefined }), EURUSD, { ...Q, lossTickValue: 1 });
     expect(r).toEqual({ ok: true, perOrder: [null, null], total: null, unbounded: true });

@@ -86,6 +86,9 @@ const schema = z
     // How long running executions get to finish on SIGTERM. The host's kill timeout must exceed it (docs/08).
     SHUTDOWN_DRAIN_MS: int(1_000, 120_000, 15_000),
 
+    // R9.2: commission per lot (account currency) added to the risk to SL. 0 for standard accounts; set it on raw/zero.
+    COMMISSION_PER_LOT: z.coerce.number().min(0).max(1000).default(0),
+
     // Batch identity (R9.1): prefix × 10^9 + batchSeq must stay below 2^53.
     APP_MAGIC_PREFIX: int(1, 9_007_198, 7731),
   })

@@ -97,10 +97,10 @@ describe("OD1 bulk market entries", () => {
     expect(p.warnings).toContain("No stop loss: the loss on these orders is limited only by your account.");
   });
 
-  it("R5.1: volume rounds DOWN to the step, the effective lot is shown; under min or over max refuses", () => {
-    const p = ok(build(req({ volume: 0.057 })));
-    expect(p.volume).toBe(0.05);
-    expect(p.warnings).toContain("Lot rounded down to 0.05 (step 0.01).");
+  it("R5.1: a typed lot must be ON the step grid: refused with the reason, never silently rounded; min/max enforced", () => {
+    const r = build(req({ volume: 0.057 }));
+    expect(!r.ok && r.error.message).toBe("0.057 isn't a multiple of the lot step 0.01.");
+    expect(ok(build(req({ volume: 0.29 }))).volume).toBe(0.29); // 0.29 / 0.01 = 28.999… in floats: a naive floor gave 0.28
     expect(build(req({ volume: 0.009 })).ok).toBe(false);
     expect(build(req({ volume: 101 })).ok).toBe(false);
     expect(ok(build(req({ volume: 0.07 }))).volume).toBe(0.07); // 0.07/0.01 is 7.000000000000001 in floats

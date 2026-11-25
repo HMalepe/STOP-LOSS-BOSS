@@ -72,6 +72,8 @@ export const planBody = z.discriminatedUnion("action", [
     volume: z.number(),
     stopLoss: ENTRY_LEVEL.optional(),
     takeProfit: ENTRY_LEVEL.optional(),
+    /** R9.2b: a batch without an SL must say so. Silence is never "no stop". */
+    noStop: z.boolean().optional(),
   }),
   z.strictObject({
     action: z.literal("ladder"),
@@ -90,6 +92,7 @@ export const planBody = z.discriminatedUnion("action", [
     ]),
     slOffsetPoints: z.number().optional(),
     tpOffsetPoints: z.number().optional(),
+    noStop: z.boolean().optional(),
   }),
 ]);
 export type PlanBody = z.infer<typeof planBody>;
@@ -339,6 +342,24 @@ async function createEntryPlan(
   body: EntryBody,
   record: (tx: Db, summary: PlanSummary) => Promise<unknown>,
 ): Promise<CreatePlanResult> {
+  // R9.2b: no stop only by explicit choice, and never contradicting a stop that was given.
+  const hasSl = body.action === "market" ? body.stopLoss !== undefined : body.slOffsetPoints !== undefined;
+  if (hasSl && body.noStop === true) {
+    return {
+      ok: false,
+      error: { code: "VALIDATION", message: "noStop can't be combined with a stop loss." },
+    };
+  }
+  if (!hasSl && body.noStop !== true) {
+    return {
+      ok: false,
+      error: {
+        code: "PLAN_INVALID",
+        message: 'This batch has no stop loss. Add one, or choose "no stop" on purpose.',
+        details: [],
+      },
+    };
+  }
   const [account, quote, spec] = await Promise.all([
     svc.broker.getAccount(),
     svc.broker.getQuote(body.symbol),
@@ -434,7 +455,7 @@ const money = (n: number, currency: string) => `${n.toFixed(2)} ${currency}`;
  * Anything the broker can't tell us blocks: never estimated (R9.2 "never guess", R9.3).
  */
 async function checkRiskAndMargin(
-  svc: TradingServices,
+  svc: Pick<TradingServices, "broker" | "commissionPerLot">,
   account: { readonly equity: number; readonly freeMargin: number; readonly currency: string },
   spec: SymbolSpec,
   quote: Quote,
@@ -445,7 +466,7 @@ async function checkRiskAndMargin(
     ok: false as const,
     error: { code: "PLAN_INVALID" as const, message, details: [] },
   });
-  const risk = riskToStop(items, spec, quote);
+  const risk = riskToStop(items, spec, quote, svc.commissionPerLot);
   if (!risk.ok) {
     return { ok: false, error: { code: "BROKER_UNAVAILABLE", message: risk.message, details: [] } };
   }

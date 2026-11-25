@@ -100,7 +100,14 @@ describe("OD2 pending ladder", () => {
     expect(!near.ok && near.error.message).toMatch(/1\.08610.*1\.08580/);
   });
 
-  it("R5.6 + R5.6a: SL/TP are offsets from each level, at least d from it; inside d refuses the ladder", () => {
+  it("R5.5b: a stop must be STRICTLY beyond d from the pending's own price (an offset of exactly d is refused)", () => {
+    const spec = { ...EURUSD, stopsLevel: 30 }; // d = 32
+    expect(build(req({ slOffsetPoints: 32, tpOffsetPoints: undefined }), { spec, quote: Q }).ok).toBe(false);
+    expect(build(req({ slOffsetPoints: 33, tpOffsetPoints: undefined }), { spec, quote: Q }).ok).toBe(true);
+    expect(build(req({ slOffsetPoints: 200, tpOffsetPoints: 32 }), { spec, quote: Q }).ok).toBe(false);
+  });
+
+  it("R5.6 + R5.5b: SL/TP are offsets from each level, beyond d from it; inside d refuses the ladder", () => {
     const p = ok(build());
     expect([p.items[0]?.sl, p.items[0]?.tp]).toEqual([1.083, 1.089]);
     expect([p.items[5]?.sl, p.items[5]?.tp]).toEqual([1.078, 1.084]);
@@ -109,7 +116,7 @@ describe("OD2 pending ladder", () => {
     );
     expect([sell.items[0]?.sl, sell.items[0]?.tp]).toEqual([1.089, 1.083]);
     const tight = build(req({ slOffsetPoints: 10 }), { spec: { ...EURUSD, stopsLevel: 30 }, quote: Q });
-    expect(!tight.ok && tight.error.message).toMatch(/R5\.6a/);
+    expect(!tight.ok && tight.error.message).toMatch(/R5\.5b/);
   });
 
   it("R0.4: a stop that would land at or below zero refuses the ladder (0 means 'no stop' on the MT5 wire)", () => {
@@ -135,7 +142,9 @@ describe("OD2 pending ladder", () => {
       build(req({ spacing: { mode: "count", levels: 4 }, lots: { mode: "scaled", start: 0.1, end: 0.01 } })),
     );
     expect(down.items.map((i) => i.volume)).toEqual([0.1, 0.07, 0.04, 0.01]);
-    // 0.1 → 0.2 over 4 levels is 0.1333…: rounds down to 0.13, never up.
+    // Typed start/end must be on the grid (R5.1); derived levels round DOWN: 0.1 → 0.2 over 4 levels is 0.1333…, 0.13.
+    expect(build(req({ lots: { mode: "scaled", start: 0.105, end: 0.2 } })).ok).toBe(false);
+    expect(build(req({ lots: { mode: "flat", lot: 0.015 } })).ok).toBe(false);
     expect(
       ok(
         build(req({ spacing: { mode: "count", levels: 4 }, lots: { mode: "scaled", start: 0.1, end: 0.2 } })),

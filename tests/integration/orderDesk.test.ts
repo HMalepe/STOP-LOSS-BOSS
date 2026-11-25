@@ -215,8 +215,13 @@ describe("M3b: risk to SL and margin, before anything is stored (OD6, R9.2, R9.3
     expect(summary.risk?.marginRequired).toBeGreaterThan(0);
   });
 
-  it("no SL is allowed (owner decision): unbounded risk is shown as null with a loud warning, margin still checked", async () => {
-    const res = await preview({ ...MARKET, stopLoss: undefined });
+  it("no SL without saying so → refused; with noStop it's allowed: unbounded risk shown as null + the warning, margin still checked", async () => {
+    const silent = await preview({ ...MARKET, stopLoss: undefined });
+    expect(silent.status).toBe(422);
+    expect((await errorOf(silent)).message).toBe(
+      'This batch has no stop loss. Add one, or choose "no stop" on purpose.',
+    );
+    const res = await preview({ ...MARKET, stopLoss: undefined, noStop: true });
     expect(res.status).toBe(201);
     const summary = planSummary.parse(await res.json());
     expect(summary.risk).toMatchObject({ toStop: null, pctOfEquity: null, capPct: 2 });
@@ -225,14 +230,21 @@ describe("M3b: risk to SL and margin, before anything is stored (OD6, R9.2, R9.3
       "No stop loss: the loss on these orders is limited only by your account.",
     );
     const big = await preview(
-      { ...MARKET, stopLoss: undefined },
+      { ...MARKET, stopLoss: undefined, noStop: true },
       routesWith({ calculateMargin: () => Promise.resolve(1_000_000) }),
     );
     expect((await errorOf(big)).message).toMatch(/needs .* margin; free margin is/);
   });
 
-  it("no-SL batch fires and opens orders with no stop (the only thing standing is what you asked for)", async () => {
-    const id = await planId({ ...MARKET, stopLoss: undefined, takeProfit: undefined });
+  it("noStop together with a stop loss is a contradiction → 400, for batches and ladders", async () => {
+    expect((await preview({ ...MARKET, noStop: true })).status).toBe(400);
+    expect((await preview({ ...LADDER, noStop: true })).status).toBe(400);
+    expect((await preview({ ...LADDER, slOffsetPoints: undefined })).status).toBe(422);
+    expect((await preview({ ...LADDER, slOffsetPoints: undefined, noStop: true })).status).toBe(201);
+  });
+
+  it("a noStop batch fires and opens orders with no stop (only because it was asked for)", async () => {
+    const id = await planId({ ...MARKET, stopLoss: undefined, takeProfit: undefined, noStop: true });
     const { executionId } = await run(id);
     expect(executionId).toBeDefined();
     const magic = ((await itemsOf(id))[0] as { magic: number }).magic;

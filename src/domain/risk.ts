@@ -21,12 +21,16 @@ export type RiskResult =
     }
   | { readonly ok: false; readonly message: string };
 
+/** Up to the next cent (R9.2): rounding each order to nearest then summing can understate. 1e-9 absorbs float noise. */
+const centsUp = (n: number) => Math.ceil(n * 100 - 1e-9) / 100;
 const cents = (n: number) => Math.round(n * 100) / 100;
 
 export function riskToStop(
   items: readonly (MarketEntryItem | PendingEntryItem)[],
   spec: SymbolSpec,
   quote: Quote,
+  /** COMMISSION_PER_LOT in account currency (0 unless the account charges commission, e.g. raw/zero accounts). */
+  commissionPerLot = 0,
 ): RiskResult {
   const tv = quote.lossTickValue;
   if (tv === undefined || !Number.isFinite(tv) || tv <= 0) {
@@ -41,7 +45,7 @@ export function riskToStop(
     if (i.sl === null) return null;
     const entry = i.op === "pending" ? i.openPrice : i.side === "BUY" ? quote.ask : quote.bid;
     const ticks = Math.abs(toPoints(entry, spec) - toPoints(i.sl, spec)) / pointsPerTick;
-    return cents(ticks * tv * i.volume);
+    return centsUp(ticks * tv * i.volume + commissionPerLot * i.volume);
   });
   const unbounded = perOrder.some((x) => x === null);
   return {

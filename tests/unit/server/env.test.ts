@@ -94,6 +94,12 @@ describe("loadEnv per mode", () => {
     expect(problemsOf({ ...demoBase, SPREAD_MAX_POINTS: "EURUSD=30" })[0]).toMatch(/^SPREAD_MAX_POINTS:/);
   });
 
+  it("R9.2 COMMISSION_PER_LOT: 0 by default, a non-negative number, bounded", () => {
+    expect(loadEnv(demoBase).COMMISSION_PER_LOT).toBe(0);
+    expect(loadEnv({ ...demoBase, COMMISSION_PER_LOT: "7" }).COMMISSION_PER_LOT).toBe(7);
+    expect(problemsOf({ ...demoBase, COMMISSION_PER_LOT: "-1" })[0]).toMatch(/^COMMISSION_PER_LOT:/);
+  });
+
   it("graceful shutdown: signal handling must be ours outside mock; drain window is bounded", () => {
     expect(problemsOf({ ...demoBase, NEXT_MANUAL_SIG_HANDLE: "1" })[0]).toMatch(/^NEXT_MANUAL_SIG_HANDLE:/);
     expect(loadEnv(demoBase).SHUTDOWN_DRAIN_MS).toBe(15_000);
