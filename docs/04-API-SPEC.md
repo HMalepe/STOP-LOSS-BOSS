@@ -19,6 +19,12 @@ Errors: `{ error: { code: string, message: string, details?: unknown } }`.
 | POST | /api/close-now | {filter, cancelPending, confirm:"CLOSE"} → executes immediately (plan built and run in one call, still audited) |
 | GET | /api/history?cursor= | past executions |
 | POST | /api/admin/kill-switch | {halted:boolean} |
+| GET | /api/presets | → {presets}: pinned first, then the owner's order; each has `absolutePrices` (R9.6) |
+| POST | /api/presets | {name (≤ 40, unique case-insensitively), recipe (a market batch or ladder body, same schema as POST /api/plans), pinned?}; ≤ 50 presets |
+| PUT | /api/presets/{id} | partial {name, recipe, pinned} |
+| DELETE | /api/presets/{id} | |
+| PUT | /api/presets/order | {ids}: every preset exactly once |
+| POST | /api/presets/{id}/fire | a FRESH preview built from the live quote and spec (R9.6): 201 plan summary, identical to POST /api/plans; the owner confirms and executes it as usual. Audit `plan.created` carries `presetId` |
 | GET | /api/settings/caps | → {caps, ceilings}: caps in force and the server's MAX_* ceilings |
 | POST | /api/settings/caps | partial {maxOrdersPerAction, maxTotalLots, maxRiskPct, maxPositionsPerBatch}; re-auth; each ≤ its ceiling; audited `caps.changed` {before, after} |
 

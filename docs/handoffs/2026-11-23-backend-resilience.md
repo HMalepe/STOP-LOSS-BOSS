@@ -29,11 +29,19 @@ The UI branch (`claude/determined-mccarthy-kgq7ml`) is merged in up to f2132c6; 
 - (this) restart reconcile of entries by clientId (`reconcileRestartedEntries`, run at boot)
 - Merge note: UI moved the DB singleton to globalThis; `startedDb()` now returns `shared.db`.
 
+## Added 2026-11-25
+- 8e17b35 fix: batches could share a clientId (seq 10 item 10 = seq 361 item 0); reconcile now needs magic AND clientId
+- b536014 R5.1 grid rule, R5.5b, R9.2 rounding/commission/noStop (explicit opt-in, keeps the owner's "allow")
+- b896858 R5.3b stop verified after fill, else set, else close the position
+- 5a4e1d0 R9.10 systemic failures stop a batch; R9.7 free margin re-read at execute (409 MARGIN_INSUFFICIENT)
+- (this) M4 presets: `src/server/presets.ts`, `presetRoutes.ts`, `previewPlan.ts` (shared preview path)
+
 ## Next session should start by
-1. M4 (next): presets CRUD (OD3) + fire = fresh preview from the recipe (R9.6). Owner decisions made 2026-11-25: no-SL batches allowed
-   (risk null + warning), Q3 = no per-execute TOTP.
+1. Remaining §9 gaps are listed in PROGRESS.md ("Order Desk: code vs reviewed §9"): R9.3 margin method, R9.4b slack/floor,
+   R9.11 fill modes + drift breaker, R9.12 pending expiry. UI for batches, ladders and presets (api: /api/presets, plans
+   with action market/ladder + noStop).
 2. M4: presets CRUD. UI can use `/api/settings/caps`, `/api/admin/metrics`.
 
 ## State check
-- `pnpm verify`: green (979 passed, 1 skipped). Load: 0 duplicates.
+- `pnpm verify`: green (1017 passed, 1 skipped). Load: 0 duplicates.
 - Uncommitted changes: none after this note.

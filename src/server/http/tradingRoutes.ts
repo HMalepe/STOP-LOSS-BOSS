@@ -3,7 +3,8 @@ import { z } from "zod";
 import { BrokerError } from "@/broker/BrokerProvider";
 import { killSwitchState } from "@/server/killSwitch";
 import { AccountModeError, type TradingServices } from "@/server/trading/services";
-import { createPlan, LATER_ACTIONS, loadPlan, planBody } from "@/server/trading/plans";
+import { LATER_ACTIONS, loadPlan, planBody } from "@/server/trading/plans";
+import { previewPlan } from "./previewPlan";
 import {
   outcomeOf,
   progressView,
@@ -70,8 +71,6 @@ export async function withBroker(
   }
 }
 
-const PLAN_INVALID_EMPTY = "Nothing to do: no open positions match.";
-
 export function makeTradingRoutes(
   guard: ReturnType<typeof makeGuard>,
   services: () => Promise<TradingServices>,
@@ -134,35 +133,7 @@ export function makeTradingRoutes(
             : `${first.path.map(String).join(".") || "body"}: ${first.message}`,
         );
       }
-      return withBroker(services, async (svc) => {
-        const r = await createPlan(svc, deps.db, session.userId, body.data, (t, summary) =>
-          audit(
-            t,
-            auditKey(deps.sessionSecret),
-            {
-              actor: "owner",
-              action: "plan.created",
-              subject: summary.id,
-              details: { action: summary.action, symbol: summary.symbol, count: summary.count },
-            },
-            new Date(svc.clock.now()),
-          ),
-        );
-        if (r.ok) return ok(r.summary, 201);
-        const e = r.error;
-        switch (e.code) {
-          case "VALIDATION":
-            return fail("VALIDATION", e.message);
-          case "PRICE_STALE":
-            return fail("PRICE_STALE", e.message);
-          case "BROKER_UNAVAILABLE":
-            return fail("BROKER_UNAVAILABLE", e.message, { details: e.details });
-          case "NO_MATCH":
-            return fail("PLAN_INVALID", PLAN_INVALID_EMPTY, { details: [] });
-          case "PLAN_INVALID":
-            return fail("PLAN_INVALID", e.message, { details: e.details });
-        }
-      });
+      return withBroker(services, (svc) => previewPlan(svc, deps, session.userId, body.data));
     }),
 
     /** GET /api/plans/:id: the stored summary and its exact items. Only the owner's own plans. */

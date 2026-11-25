@@ -64,3 +64,21 @@ export function post(path: string, body: unknown, cookie?: string): Request {
     body: JSON.stringify(body),
   });
 }
+
+/** Same as post() for any method (PUT, DELETE). */
+export function send(
+  method: "PUT" | "DELETE" | "PATCH",
+  path: string,
+  body: unknown,
+  cookie?: string,
+): Request {
+  return new Request(`${ORIGIN}${path}`, {
+    method,
+    headers: {
+      origin: ORIGIN,
+      "content-type": "application/json",
+      ...(cookie === undefined ? {} : { cookie }),
+    },
+    body: JSON.stringify(body),
+  });
+}

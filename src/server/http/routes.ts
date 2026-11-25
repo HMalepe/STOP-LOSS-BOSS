@@ -6,6 +6,7 @@ import { getLogger } from "@/server/logger";
 import { makeAdminRoutes } from "./adminRoutes";
 import { makeAuthRoutes } from "./authRoutes";
 import { makeGuard } from "./guard";
+import { makePresetRoutes } from "./presetRoutes";
 import { makeSettingsRoutes } from "./settingsRoutes";
 import { makeTradingRoutes } from "./tradingRoutes";
 import { getTradingServices, readyTradingServices, startedTradingServices } from "@/server/trading/services";
@@ -48,5 +49,7 @@ export const healthRoutes = makeHealthRoutes({
 });
 
 export const tradingRoutes = makeTradingRoutes(guard, getTradingServices);
+
+export const presetRoutes = makePresetRoutes(guard, getTradingServices);
 
 export const settingsRoutes = makeSettingsRoutes(guard, () => capsFromEnv(getEnv()));

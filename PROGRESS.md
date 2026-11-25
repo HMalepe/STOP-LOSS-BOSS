@@ -18,7 +18,7 @@
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
 | 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
 | 07 | UI | ✅ | "The Observatory" design system (docs/12), controls, sign-in, live desk, History, Settings/kill switch, palette, PWA + offline. 13 e2e + screenshot set (docs/screens/phone). Design review: real issues fixed, 2 were screenshot-timing artifacts |
-| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | §9 rules ✅ reviewed by trading-systems (8 must-fix folded in). Backend built before that review: M1 ✅ market batch · M2 ✅ ladder · M3a ✅ entries preview→execute · M3b ✅ risk + margin · M3c ✅ spread guard · ✅ restart reconcile. **Code vs revised §9: see gaps list** · M4 presets |
+| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | §9 rules ✅ reviewed by trading-systems (8 must-fix folded in). Backend built before that review: M1 ✅ market batch · M2 ✅ ladder · M3a ✅ entries preview→execute · M3b ✅ risk + margin · M3c ✅ spread guard · ✅ restart reconcile. **Code vs revised §9: see gaps list** · M4 ✅ presets |
 | 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
 | 10 | Hardening and go-live | ⬜ | |
@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-25: Presets store RECIPES (the same zod schema as POST /api/plans, so never more lenient). Fire = the shared previewPlan path: fresh live quote/spec, new batch number, same risk/margin/spread/caps checks, plan.created audit with presetId. Absolute-price presets (ladders, price SL/TP) are flagged. ≤ 50 presets, unique names, pinned first
 - 2026-11-25: Code aligned to the reviewed §9 (doc wins): R5.1 typed lots must be on the step grid (refused, never rounded); R5.5b stop strictly > d from a pending's own price; R9.1 clientId = base36(seq) + 3-digit index and reconcile matches magic AND clientId (a real cross-batch collision existed); R9.2 rounds each order UP to the cent, COMMISSION_PER_LOT, and R9.2b: no SL only with explicit noStop (this keeps the owner's "allow", it just can't happen by omission)
 - 2026-11-25 (owner): Batches with no SL are ALLOWED. Risk shown as null (unbounded) with the no-SL warning; the % risk cap can't apply, margin still must fit. Supersedes the 2026-11-24 "refuse no-SL" line
 - 2026-11-25 (owner): Q3 no: live execute does not need a fresh authenticator code
@@ -108,7 +109,7 @@ Still to build (doc wins):
 - R9.3 margin method (existing + new − existing, ×1.1 safety, warnings at 300% / worst case)
 - R9.4b refinements: slack + floor + outlier-excluded median (raw accounts have a 0-2 pt median); re-check between waves
 - R9.11 explicit fillingModes + fill-drift breaker (MAX_FILL_DRIFT_POINTS); R9.12 pending expiry (default end of day)
-- R4.3 cancel-first close-now is done by the UI session; presets (M4, R9.6) not built
+- R4.3 cancel-first close-now is done by the UI session
 Known cost: R5.3b reads the positions list once per market entry (stream read, no credits); batch it per wave if a 500-order batch feels slow on demo.
 
 ## Open questions for the owner

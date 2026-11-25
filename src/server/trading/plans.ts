@@ -52,6 +52,40 @@ const filter = z.strictObject({
   inProfitOnly: z.boolean().optional(),
 });
 
+/** Order Desk (Phase 08). Values are range-checked by the domain builder (R0.6), which says what's wrong in words. */
+export const marketBody = z.strictObject({
+  action: z.literal("market"),
+  symbol: SYMBOL,
+  side: SIDE,
+  count: z.number(),
+  volume: z.number(),
+  stopLoss: ENTRY_LEVEL.optional(),
+  takeProfit: ENTRY_LEVEL.optional(),
+  /** R9.2b: a batch without an SL must say so. Silence is never "no stop". */
+  noStop: z.boolean().optional(),
+});
+export const ladderBody = z.strictObject({
+  action: z.literal("ladder"),
+  symbol: SYMBOL,
+  side: SIDE,
+  kind: z.enum(["limit", "stop"]),
+  from: z.number(),
+  to: z.number(),
+  spacing: z.discriminatedUnion("mode", [
+    z.strictObject({ mode: z.literal("count"), levels: z.number() }),
+    z.strictObject({ mode: z.literal("step"), points: z.number() }),
+  ]),
+  lots: z.discriminatedUnion("mode", [
+    z.strictObject({ mode: z.literal("flat"), lot: z.number() }),
+    z.strictObject({ mode: z.literal("scaled"), start: z.number(), end: z.number() }),
+  ]),
+  slOffsetPoints: z.number().optional(),
+  tpOffsetPoints: z.number().optional(),
+  noStop: z.boolean().optional(),
+});
+/** A preset's recipe is exactly an entry request (R9.6): the same schema, so a saved recipe can never be more lenient. */
+export const entryBody = z.discriminatedUnion("action", [marketBody, ladderBody]);
+
 /** The actions the preview supports today. Entries (market, ladder) and cancel arrive with the Order Desk (Phase 08). */
 export const planBody = z.discriminatedUnion("action", [
   z.strictObject({
@@ -63,37 +97,8 @@ export const planBody = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("closeAt"), filter, price: PRICE }),
   z.strictObject({ action: z.literal("breakeven"), filter, offsetPoints: POINTS }),
   z.strictObject({ action: z.literal("lock"), filter, distancePoints: POINTS.min(1) }),
-  // Order Desk (Phase 08). Values are range-checked by the domain builder (R0.6), which says what's wrong in words.
-  z.strictObject({
-    action: z.literal("market"),
-    symbol: SYMBOL,
-    side: SIDE,
-    count: z.number(),
-    volume: z.number(),
-    stopLoss: ENTRY_LEVEL.optional(),
-    takeProfit: ENTRY_LEVEL.optional(),
-    /** R9.2b: a batch without an SL must say so. Silence is never "no stop". */
-    noStop: z.boolean().optional(),
-  }),
-  z.strictObject({
-    action: z.literal("ladder"),
-    symbol: SYMBOL,
-    side: SIDE,
-    kind: z.enum(["limit", "stop"]),
-    from: z.number(),
-    to: z.number(),
-    spacing: z.discriminatedUnion("mode", [
-      z.strictObject({ mode: z.literal("count"), levels: z.number() }),
-      z.strictObject({ mode: z.literal("step"), points: z.number() }),
-    ]),
-    lots: z.discriminatedUnion("mode", [
-      z.strictObject({ mode: z.literal("flat"), lot: z.number() }),
-      z.strictObject({ mode: z.literal("scaled"), start: z.number(), end: z.number() }),
-    ]),
-    slOffsetPoints: z.number().optional(),
-    tpOffsetPoints: z.number().optional(),
-    noStop: z.boolean().optional(),
-  }),
+  marketBody,
+  ladderBody,
 ]);
 export type PlanBody = z.infer<typeof planBody>;
 export const LATER_ACTIONS = new Set(["cancel"]);

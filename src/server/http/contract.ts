@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { capsPatchBody } from "@/server/caps";
+import { presetInput, presetPatch, reorderBody } from "@/server/presets";
 import { closeNowBody } from "@/server/trading/manage";
 import { planBody } from "@/server/trading/plans";
 import { killBody, liveBody } from "./adminRoutes";
@@ -163,7 +164,7 @@ type Schema = z.ZodType;
 const json = (s: Schema, io: "input" | "output") => z.toJSONSchema(s, { io, unrepresentable: "any" });
 
 interface Op {
-  readonly method: "get" | "post";
+  readonly method: "get" | "post" | "put" | "delete";
   readonly path: string;
   readonly summary: string;
   readonly body?: Schema;
@@ -336,6 +337,60 @@ export const OPERATIONS: readonly Op[] = [
     summary: "Counters and circuit-breaker state since process start",
     ok: { status: 200 },
     errors: [...AUTHED],
+  },
+  {
+    method: "get",
+    path: "/api/presets",
+    summary: "The owner's presets: pinned first, then their order",
+    ok: { status: 200 },
+    errors: [...AUTHED, "RATE_LIMITED"],
+  },
+  {
+    method: "post",
+    path: "/api/presets",
+    summary: "Save a recipe (a market batch or a ladder) as a preset; at most 50, unique names",
+    body: presetInput,
+    ok: { status: 201 },
+    errors: [...AUTHED, "VALIDATION", "RATE_LIMITED"],
+  },
+  {
+    method: "put",
+    path: "/api/presets/order",
+    summary: "Set the owner's order: every preset exactly once",
+    body: reorderBody,
+    ok: { status: 200 },
+    errors: [...AUTHED, "VALIDATION", "RATE_LIMITED"],
+  },
+  {
+    method: "put",
+    path: "/api/presets/{id}",
+    summary: "Rename, pin or replace the recipe of a preset",
+    body: presetPatch,
+    ok: { status: 200 },
+    errors: [...AUTHED, "VALIDATION", "NOT_FOUND", "RATE_LIMITED"],
+  },
+  {
+    method: "delete",
+    path: "/api/presets/{id}",
+    summary: "Delete a preset",
+    ok: { status: 200 },
+    errors: [...AUTHED, "NOT_FOUND", "RATE_LIMITED"],
+  },
+  {
+    method: "post",
+    path: "/api/presets/{id}/fire",
+    summary:
+      "Fire a preset: a FRESH preview from the live market (R9.6). Same response and checks as POST /api/plans; execute the plan as usual",
+    ok: { status: 201, schema: planSummary },
+    errors: [
+      ...AUTHED,
+      "VALIDATION",
+      "NOT_FOUND",
+      "PLAN_INVALID",
+      "PRICE_STALE",
+      "BROKER_UNAVAILABLE",
+      "RATE_LIMITED",
+    ],
   },
   {
     method: "get",
