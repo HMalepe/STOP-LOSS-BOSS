@@ -36,6 +36,11 @@ export interface Quote {
   readonly ask: number;
   /** Epoch ms of the tick. */
   readonly time: number;
+  /**
+   * R9.2: value of one tick of LOSS for one lot, in account currency, as the broker computes it. It lives on the price feed
+   * (MetaApi `MetatraderSymbolPrice.lossTickValue`), not on the symbol spec. Absent = risk can't be verified.
+   */
+  readonly lossTickValue?: number;
 }
 
 export interface Position {
