@@ -1402,3 +1402,59 @@ describe("R5.3b: an entry counts as filled only when its stop is verified on the
     expect((await positionsOf(broker, s))[0]?.sl).toBe(1.08);
   });
 });
+
+describe("R9.10: a systemic failure stops the rest of the batch", () => {
+  const entries = (n: number): ExecItem[] =>
+    Array.from({ length: n }, (_, i) => market(`s${String(i).padStart(3, "0")}`));
+  const marketCalls = (b: MockBroker) => b.calls.filter((c) => c.op === "market").length;
+
+  it("the first LIMIT_ORDERS (position cap) fails that item; every item not yet sent is 'not sent', no more calls", async () => {
+    const { s, broker, deps } = setup({ maxPositions: 3 }, 1);
+    const { results, summary } = await collect(entries(10), deps, s);
+    expect(results.slice(0, 3).map((r) => r.outcome)).toEqual(["done", "done", "done"]);
+    expect(results[3]).toMatchObject({ outcome: "failed", code: RETCODE.LIMIT_ORDERS });
+    for (const r of results.slice(4)) {
+      expect(r).toMatchObject({ outcome: "skipped", attempts: 0, code: null });
+      expect(r.message).toMatch(/^not sent: .*stopped the rest of the batch \(R9\.10\)/);
+    }
+    expect(marketCalls(broker)).toBe(4);
+    expect(summary).toMatchObject({ done: 3, failed: 1, skipped: 6, total: 10 });
+  });
+
+  it("every systemic code does it; an ordinary refusal (INVALID_STOPS, REQUOTE) does not", async () => {
+    for (const code of [
+      RETCODE.NO_MONEY,
+      RETCODE.LIMIT_VOLUME,
+      RETCODE.TRADE_DISABLED,
+      RETCODE.MARKET_CLOSED,
+      RETCODE.LIMIT_POSITIONS,
+    ]) {
+      const { s, broker, deps } = setup({ faults: { market: [{ rate: 1, code }] } }, 1);
+      const { results } = await collect(entries(5), deps, s);
+      expect(marketCalls(broker), String(code)).toBe(1);
+      expect(
+        results.filter((r) => r.outcome === "skipped"),
+        String(code),
+      ).toHaveLength(4);
+    }
+    const { s, broker, deps } = setup({ faults: { market: [{ rate: 1, code: RETCODE.INVALID_STOPS }] } }, 1);
+    await collect(entries(5), deps, s);
+    expect(marketCalls(broker)).toBe(5); // each fails on its own merits; nothing systemic
+  });
+
+  it("with concurrency only items already in flight can still fail; nothing new starts after the first systemic failure", async () => {
+    const { s, broker, deps } = setup({ faults: { market: [{ rate: 1, code: RETCODE.NO_MONEY }] } }, 4);
+    const { results } = await collect(entries(40), deps, s);
+    expect(marketCalls(broker)).toBeLessThanOrEqual(4);
+    expect(results.filter((r) => r.outcome === "skipped").length).toBeGreaterThanOrEqual(36);
+    expect(results.every((r) => r.outcome === "failed" || r.outcome === "skipped")).toBe(true);
+  });
+
+  it("only entries trigger it: failed closes and modifies never stop a batch", async () => {
+    const { s, broker, deps } = setup({ faults: { close: [{ rate: 1, code: RETCODE.NO_MONEY }] } }, 1);
+    const ids = Array.from({ length: 4 }, () => seedBuy(broker));
+    const { results } = await collect(ids.map(close), deps, s);
+    expect(results.every((r) => r.outcome === "failed")).toBe(true);
+    expect(results.some((r) => r.outcome === "skipped")).toBe(false);
+  });
+});

@@ -215,6 +215,34 @@ describe("every error code in docs/04, from a real request", () => {
     await expectError(await exec(id, strict), "SPREAD_TOO_WIDE");
   });
 
+  it("MARGIN_INSUFFICIENT: free margin fell below what the previewed batch needs", async () => {
+    const res = await routes.createPlan(
+      post(
+        "/api/plans",
+        {
+          action: "market",
+          symbol: "EURUSD",
+          side: "BUY",
+          count: 1,
+          volume: 0.01,
+          stopLoss: { kind: "points", value: 200 },
+        },
+        s.cookie,
+      ),
+    );
+    const { id } = (await res.json()) as { id: string };
+    broker.seedPosition({
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 80,
+      openPrice: 1.086,
+      sl: null,
+      tp: null,
+      magic: 0,
+    });
+    await expectError(await exec(id), "MARGIN_INSUFFICIENT");
+  });
+
   it("NOT_FOUND", async () => {
     await expectError(await routes.getPlan(get("/api/plans/x", s.cookie), "x"), "NOT_FOUND");
   });

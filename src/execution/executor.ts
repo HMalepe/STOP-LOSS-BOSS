@@ -7,6 +7,7 @@
  * It never throws: every item ends with an outcome. Abort stops new work; calls already in flight finish.
  */
 import type { BrokerProvider, TradeResult } from "@/broker/BrokerProvider";
+import { RETCODE } from "@/broker/retcodes";
 import { Channel, Deferred } from "./channel";
 import type { CircuitBreaker } from "./circuitBreaker";
 import type { CreditLimiter, Priority } from "./rateLimiter";
@@ -49,6 +50,16 @@ export interface ExecuteDeps {
   readonly beforeSend?: (index: number, item: ExecItem) => Promise<void>;
 }
 
+/** R9.10 (codes verified in retcodes.ts; 10040 is the account position cap per MetaApi's docs). */
+const SYSTEMIC_ENTRY_CODES: ReadonlySet<number> = new Set([
+  RETCODE.NO_MONEY,
+  RETCODE.LIMIT_ORDERS,
+  RETCODE.LIMIT_VOLUME,
+  RETCODE.LIMIT_POSITIONS,
+  RETCODE.TRADE_DISABLED,
+  RETCODE.MARKET_CLOSED,
+]);
+
 export function execute(items: readonly ExecItem[], deps: ExecuteDeps): AsyncIterable<ExecEvent> {
   const channel = new Channel<ExecEvent>();
   // run() handles every item's errors itself; this guard only exists so a bug can never leave a consumer hanging.
@@ -68,8 +79,21 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
   let retries = 0;
   let next = 0;
 
+  // R9.10: the first systemic entry failure (no money, position/volume limits, trading disabled, market closed) means
+  // every later entry would fail the same way and cost 10 credits each: nothing new is sent after it.
+  let systemic: string | undefined;
+
   const progress = (): Progress => ({ total: items.length, ...counts });
   const finish = (r: ItemResult) => {
+    if (
+      systemic === undefined &&
+      r.outcome === "failed" &&
+      (r.op === "market" || r.op === "pending") &&
+      r.code !== null &&
+      SYSTEMIC_ENTRY_CODES.has(r.code)
+    ) {
+      systemic = r.message || r.stringCode;
+    }
     results[r.index] = r;
     counts.finished += 1;
     counts[r.outcome] += 1;
@@ -118,6 +142,10 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
       if (item === undefined) return;
       next += 1;
       if (results[index] !== undefined) continue;
+      if (systemic !== undefined && (item.op === "market" || item.op === "pending")) {
+        finish(blank(index, item, "skipped", `not sent: ${systemic} stopped the rest of the batch (R9.10)`));
+        continue;
+      }
       if (!(await recordIntent(index, item))) continue;
       // An item that has to wait on a slow/stuck request frees its worker (SRE review: otherwise a hung broker stalls
       // close-now for an hour). It finishes in the background; the run waits for it before completing.

@@ -103,10 +103,9 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - ADR-0010 one-request panic close: verify on demo first.
 
 ## Order Desk: code vs reviewed §9 (as of 2026-11-25)
-Done: R5.1 · R5.3b (stop verified or position closed) · R5.5b · R9.1 ids + reconcile on magic AND clientId · R9.2 rounding/commission/noStop · R9.4 (basic) · R9.5 · R9.6 domain.
+Done: R5.1 · R5.3b (stop verified or position closed) · R5.5b · R9.1 ids + reconcile on magic AND clientId · R9.2 rounding/commission/noStop · R9.4 (basic) · R9.5 · R9.7 (free margin re-read at execute) · R9.10 (systemic failures stop the batch).
 Still to build (doc wins):
-- R9.10 systemic failures (NO_MONEY, LIMIT_*, TRADE_DISABLED, MARKET_CLOSED) stop the rest of a batch ("not sent")
-- R9.7 execute re-reads free margin vs the stored requirement; R9.3 margin method (existing + new − existing, ×1.1 safety, warnings at 300% / worst case)
+- R9.3 margin method (existing + new − existing, ×1.1 safety, warnings at 300% / worst case)
 - R9.4b refinements: slack + floor + outlier-excluded median (raw accounts have a 0-2 pt median); re-check between waves
 - R9.11 explicit fillingModes + fill-drift breaker (MAX_FILL_DRIFT_POINTS); R9.12 pending expiry (default end of day)
 - R4.3 cancel-first close-now is done by the UI session; presets (M4, R9.6) not built

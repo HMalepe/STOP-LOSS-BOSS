@@ -351,3 +351,31 @@ describe("M3c: spread guard at fire time (R9.4)", () => {
     expect(executionId).toBeDefined();
   });
 });
+
+describe("R9.7: free margin is re-read at execute", () => {
+  it("margin used elsewhere between preview and fire → MARGIN_INSUFFICIENT, zero broker calls", async () => {
+    const id = await planId(MARKET);
+    // Someone (or a big position opened by hand) eats the free margin after the preview.
+    broker.seedPosition({
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 80,
+      openPrice: 1.086,
+      sl: null,
+      tp: null,
+      magic: 0,
+    });
+    const calls = broker.calls.length;
+    const { res } = await run(id);
+    expect(res.status).toBe(409);
+    const e = await errorOf(res);
+    expect(e.code).toBe("MARGIN_INSUFFICIENT");
+    expect(e.message).toMatch(/^Free margin is now .* USD, this batch needs .* USD\. Nothing was sent\./);
+    expect(broker.calls.length).toBe(calls);
+  });
+
+  it("enough free margin still fires; a plan from before this check (no stored requirement) is not blocked by it", async () => {
+    const { executionId } = await run(await planId(MARKET));
+    expect(executionId).toBeDefined();
+  });
+});

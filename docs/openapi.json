@@ -46,6 +46,7 @@
                   "BROKER_UNAVAILABLE",
                   "SHUTTING_DOWN",
                   "SPREAD_TOO_WIDE",
+                  "MARGIN_INSUFFICIENT",
                   "NOT_FOUND",
                   "INTERNAL"
                 ]
@@ -1634,7 +1635,7 @@
             }
           },
           "409": {
-            "description": "PLAN_EXPIRED | PLAN_ALREADY_EXECUTED | PRICE_MOVED | PRICE_STALE | SPREAD_TOO_WIDE",
+            "description": "PLAN_EXPIRED | PLAN_ALREADY_EXECUTED | PRICE_MOVED | PRICE_STALE | SPREAD_TOO_WIDE | MARGIN_INSUFFICIENT",
             "content": {
               "application/json": {
                 "schema": {

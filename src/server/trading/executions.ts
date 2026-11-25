@@ -202,7 +202,7 @@ export type ExecuteRefusal =
   | { readonly code: "PLAN_ALREADY_EXECUTED"; readonly message: string; readonly executionId: string | null }
   | { readonly code: "PLAN_EXPIRED" | "PRICE_STALE" | "INTERNAL"; readonly message: string }
   | { readonly code: "SHUTTING_DOWN"; readonly message: string }
-  | { readonly code: "SPREAD_TOO_WIDE"; readonly message: string }
+  | { readonly code: "SPREAD_TOO_WIDE" | "MARGIN_INSUFFICIENT"; readonly message: string }
   | { readonly code: "TRADING_HALTED"; readonly message: string }
   | { readonly code: "LIVE_NOT_ENABLED" | "ACCOUNT_MODE_MISMATCH"; readonly message: string }
   | { readonly code: "PRICE_MOVED"; readonly message: string; readonly details: readonly Skipped[] };
@@ -305,6 +305,20 @@ async function entryGuard(
       ok: false,
       refusal: { code: "SPREAD_TOO_WIDE", message: spread.reason ?? "Spread too wide. Nothing was sent." },
     };
+  }
+  // R9.7: free margin NOW vs what the preview needed. A plan stored without a requirement skips this.
+  const needed = plan.summary.risk?.marginRequired;
+  if (needed !== undefined) {
+    const { freeMargin, currency } = await svc.broker.getAccount();
+    if (freeMargin < needed) {
+      return {
+        ok: false,
+        refusal: {
+          code: "MARGIN_INSUFFICIENT",
+          message: `Free margin is now ${freeMargin.toFixed(2)} ${currency}, this batch needs ${needed.toFixed(2)} ${currency}. Nothing was sent.`,
+        },
+      };
+    }
   }
   const m = marketFrom(spec, quote);
   const moved = entries.flatMap((e) => entryProblems(e, m).map((reason) => ({ id: e.clientId, reason })));
