@@ -121,8 +121,8 @@ describe("R0.3 unique tickets", () => {
       ),
     );
     expect(plan.items).toEqual([
-      { op: "close", positionId: "dup", side: "BUY", volume: 0.1 },
       { op: "cancel", orderId: "9001" },
+      { op: "close", positionId: "dup", side: "BUY", volume: 0.1 },
     ]);
     expect(plan.warnings).toContain(
       "Broker sent duplicate tickets (duplicate position dup, duplicate order 9001); each closes once.",
@@ -353,7 +353,7 @@ describe("close: F3 close all now", () => {
     expect(plan.breakdown).toEqual({ buys: 3, sells: 1, cancels: 0 });
   });
 
-  it("R4.3/R4.8: cancels matching pending orders after the positions", () => {
+  it("R4.3/R4.8: cancels matching pending orders FIRST (a ladder order must not fill mid-close)", () => {
     const orders = [
       order({ id: "o2" }),
       order({ id: "o1" }),
@@ -366,10 +366,11 @@ describe("close: F3 close all now", () => {
         snap([position("BUY")], { orders }),
       ),
     );
-    expect(plan.items.slice(1)).toEqual([
+    expect(plan.items.slice(0, 2)).toEqual([
       { op: "cancel", orderId: "o1" },
       { op: "cancel", orderId: "o2" },
     ]);
+    expect(plan.items[2]?.op).toBe("close");
     expect(plan.breakdown.cancels).toBe(2);
   });
 

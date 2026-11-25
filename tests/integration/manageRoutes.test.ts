@@ -66,7 +66,7 @@ describe("POST /api/close-now", () => {
     await finished(executionId);
     expect(await goldLeft()).toBe(0);
     expect((await broker.getOrders()).filter((o) => o.symbol === "XAUUSD")).toEqual([]);
-    expect(broker.calls.map((c) => c.op)).toEqual(["close", "close", "close", "close", "close", "cancel"]);
+    expect(broker.calls.map((c) => c.op)).toEqual(["cancel", "close", "close", "close", "close", "close"]);
     expect((await broker.getPositions()).map((p) => p.symbol)).toEqual(["EURUSD"]);
     const actions = (await s.db.query<{ action: string }>("select action from audit_log order by id")).map(
       (r) => r.action,

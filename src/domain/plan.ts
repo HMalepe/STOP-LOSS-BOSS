@@ -469,7 +469,8 @@ function buildClose(
       action: "close",
       symbol: req.filter.symbol,
       quote,
-      items: [...items, ...cancels],
+      // R4.3: cancels FIRST. A ladder order that fills between "positions closed" and "pendings cancelled" would leave new exposure.
+      items: [...cancels, ...items],
       skipped: [],
       breakdown: { ...sideCounts(items), cancels: cancels.length },
       warnings: [
