@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CommandPalette, PaletteButton } from "./CommandPalette";
 import { Wordmark } from "./Logo";
 import { ModeBadge, type Mode } from "./ModeBadge";
 import { BottomNav, SideNav } from "./NavLinks";
@@ -26,10 +27,12 @@ export function AppShell({
 }) {
   return (
     <div className="flex min-h-dvh">
+      <CommandPalette />
       <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col gap-6 border-r border-line bg-ink/60 px-3 py-4 lg:flex">
         <div className="px-1.5">
           <Wordmark />
         </div>
+        <PaletteButton />
         <SideNav />
         <div className="mt-auto flex flex-col items-start gap-2 px-1.5">
           <ModeBadge mode={mode} />
@@ -38,7 +41,15 @@ export function AppShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 border-b border-line bg-bg/88 pt-[env(safe-area-inset-top)] backdrop-blur-md">
+        <header
+          className={`sticky top-0 z-20 border-b border-line bg-bg/88 pt-[env(safe-area-inset-top)] backdrop-blur-md ${
+            mode === "live"
+              ? "border-t-[3px] border-t-live"
+              : mode === "demo"
+                ? "border-t-[3px] border-t-demo"
+                : ""
+          }`}
+        >
           <div className="mx-auto flex h-14 w-full max-w-5xl items-center gap-3 px-gutter">
             <span className="lg:hidden">
               <Wordmark compact />
@@ -51,7 +62,7 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 px-gutter pt-4 pb-40 lg:pb-28">
+        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 px-gutter pt-4 pb-48 lg:pb-32">
           {children}
         </main>
 

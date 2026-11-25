@@ -1,23 +1,29 @@
-import { Settings2 } from "lucide-react";
 import { getEnv } from "@/server/env";
 import { requireSession } from "@/server/http/pageSession";
-import { AppShell, PageHeader, Panel } from "@/ui/AppShell";
-import { EmptyState } from "@/ui/States";
+import { AppShell, PageHeader } from "@/ui/AppShell";
+import { ToastProvider } from "@/ui/Toast";
+import { SettingsPanel } from "./SettingsPanel";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   await requireSession();
+  const env = getEnv();
   return (
-    <AppShell mode={getEnv().TRADING_MODE}>
-      <PageHeader title="Settings" subtitle="Kill switch, limits, sign-in and the account mode." />
-      <Panel>
-        <EmptyState
-          icon={<Settings2 aria-hidden className="size-5" strokeWidth={1.5} />}
-          title="Settings arrive with the desk"
-          body="The kill switch, limits and recovery codes get their screens in this phase. The kill switch already works through the API."
+    <ToastProvider>
+      <AppShell mode={env.TRADING_MODE}>
+        <PageHeader title="Settings" subtitle="Kill switch, limits and sign-in." />
+        <SettingsPanel
+          mode={env.TRADING_MODE}
+          limits={{
+            orders: env.MAX_ORDERS_PER_ACTION,
+            lots: env.MAX_TOTAL_LOTS,
+            riskPct: env.MAX_RISK_PCT_PER_ACTION,
+            perBatch: env.MAX_POSITIONS_PER_BATCH,
+            spreadK: env.SPREAD_GUARD_K,
+          }}
         />
-      </Panel>
-    </AppShell>
+      </AppShell>
+    </ToastProvider>
   );
 }

@@ -65,6 +65,29 @@ export interface ApiError {
   readonly message: string;
   readonly details?: unknown;
 }
+export interface KillSwitch {
+  readonly halted: boolean;
+  readonly byEnv: boolean;
+  readonly byDb: boolean;
+}
+export interface HistoryRow {
+  readonly executionId: string;
+  readonly planId: string;
+  readonly action: string;
+  readonly symbol: string;
+  readonly status: string;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+  readonly summary: {
+    readonly total?: number;
+    readonly done?: number;
+    readonly failed?: number;
+    readonly unknown?: number;
+    readonly skipped?: number;
+    readonly aborted?: boolean;
+    readonly outcome?: string;
+  } | null;
+}
 export type Result<T> = { readonly ok: true; readonly data: T } | ({ readonly ok: false } & ApiError);
 
 async function call<T>(path: string, init?: RequestInit): Promise<Result<T>> {
@@ -93,6 +116,15 @@ const post = <T>(path: string, body: unknown) =>
   });
 
 export const api = {
+  history: (cursor?: string) =>
+    call<{ items: HistoryRow[]; nextCursor: string | null }>(
+      cursor === undefined ? "/api/history" : `/api/history?cursor=${encodeURIComponent(cursor)}`,
+    ),
+  killSwitch: () => call<KillSwitch>("/api/admin/kill-switch"),
+  setKillSwitch: (halted: boolean) => post<KillSwitch>("/api/admin/kill-switch", { halted }),
+  reauth: (code: string) => post<{ ok: true }>("/api/auth/reauth", { code }),
+  logout: () => post<null>("/api/auth/logout", {}),
+  revokeAll: () => post<{ revoked: number }>("/api/auth/sessions/revoke-all", {}),
   state: (symbol: string) => call<StateView>(`/api/state?symbol=${encodeURIComponent(symbol)}`),
   positions: (symbol: string) =>
     call<{ items: Position[]; total: number; nextCursor: string | null }>(

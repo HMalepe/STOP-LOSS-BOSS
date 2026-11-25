@@ -138,3 +138,25 @@ describe("progress headline: never 'done' when it isn't", () => {
     });
   });
 });
+
+describe("timestamps say their timezone; position sort", async () => {
+  const { clockTime, dateTime, sortPositions } = await import("@/ui/logic");
+  it("formats with a zone name", () => {
+    const t = Date.parse("2026-11-23T12:03:21Z");
+    expect(clockTime(t, "en-GB", "UTC")).toBe("12:03:21 UTC");
+    expect(dateTime("2026-11-23T12:03:21Z", "en-GB", "UTC")).toBe("23 Nov, 12:03 UTC");
+    expect(dateTime("nope")).toBe("—");
+    expect(clockTime(t)).toMatch(/\d\d:\d\d:\d\d/);
+    expect(dateTime("2026-11-23T12:03:21Z")).toMatch(/Nov/);
+  });
+  it("loss first, profit first, ticket (numeric-aware)", () => {
+    const rows = [
+      { id: "10", profit: 5 },
+      { id: "9", profit: -20 },
+      { id: "11", profit: 5 },
+    ];
+    expect(sortPositions(rows, "loss").map((r) => r.id)).toEqual(["9", "10", "11"]);
+    expect(sortPositions(rows, "profit").map((r) => r.id)).toEqual(["10", "11", "9"]);
+    expect(sortPositions(rows, "ticket").map((r) => r.id)).toEqual(["9", "10", "11"]);
+  });
+});

@@ -126,3 +126,44 @@ export function progressHeadline(
   ].filter((x): x is string => x !== null);
   return { text: bits.join(" · "), tone: p.unknown > 0 ? "warn" : p.failed > 0 ? "down" : "warn" };
 }
+
+/** "14:03:21 GMT+2": every timestamp says its timezone (ORBIT 06). Uses the device's zone. */
+export function clockTime(ms: number, locale = "en-GB", timeZone?: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+    ...(timeZone === undefined ? {} : { timeZone }),
+  }).format(ms);
+}
+
+/** "23 Nov, 14:03 GMT+2". */
+export function dateTime(iso: string, locale = "en-GB", timeZone?: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "—";
+  return new Intl.DateTimeFormat(locale, {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+    ...(timeZone === undefined ? {} : { timeZone }),
+  }).format(ms);
+}
+
+/** Order positions for display. Default: biggest loss first (what the owner most needs to see). */
+export type SortKey = "loss" | "profit" | "ticket";
+export function sortPositions<T extends { readonly id: string; readonly profit: number }>(
+  rows: readonly T[],
+  key: SortKey,
+): T[] {
+  const byId = (a: T, b: T) => a.id.length - b.id.length || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return [...rows].sort((a, b) =>
+    key === "ticket"
+      ? byId(a, b)
+      : key === "loss"
+        ? a.profit - b.profit || byId(a, b)
+        : b.profit - a.profit || byId(a, b),
+  );
+}

@@ -3,7 +3,7 @@
 > The single source of truth for where the build is. Claude updates this at every checkpoint. Keep it short and current.
 
 ## Now
-- Phase: 07 (UI) 🟨. Phase 06 ✅
+- Phase: 08 (Order Desk: bulk entries, ladders, presets) ⬜, next up. Phase 07 ✅
 - Current milestone: none
 - Blockers: **Q2** (Exness demo connected to MetaApi) for the live [T] tests in Phase 03. MockBroker and adapter code can start without it
 
@@ -17,8 +17,8 @@
 | 04 | Execution engine | ✅ | 554 tests + `pnpm load` (1,000 close-now 22 s, 0 duplicates). Board review (safety, SRE, QA): all critical/high fixed |
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
 | 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
-| 07 | UI | 🟨 | Stage 1 ✅ design system + shell ("The Observatory", docs/12) · A ✅ trading controls · B ✅ sign-in · C ✅ live desk wired to the API. Next: History, Settings, PWA (M5) |
-| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | Backend: M1 ✅ domain market batch (OD1) · M2 ✅ domain ladder (OD2) · M3a ✅ entries preview→execute (batch seq, R0.2, §7 re-check) · M3b ✅ risk to SL + margin · M3c ✅ spread guard · ✅ restart reconcile of entries · M4 presets |
+| 07 | UI | ✅ | "The Observatory" design system (docs/12), controls, sign-in, live desk, History, Settings/kill switch, palette, PWA + offline. 13 e2e + screenshot set (docs/screens/phone). Design review: real issues fixed, 2 were screenshot-timing artifacts |
+| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | Backend: M1 ✅ domain market batch (OD1) · M2 ✅ domain ladder (OD2) · M3a ✅ entries preview→execute (batch seq, R0.2, §7 re-check) · M3b ✅ risk to SL + margin · M3c ✅ spread guard · ✅ restart reconcile of entries · M4 presets. UI for entries not built yet |
 | 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
 | 10 | Hardening and go-live | ⬜ | |

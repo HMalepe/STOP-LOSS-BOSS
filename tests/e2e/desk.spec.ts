@@ -35,7 +35,33 @@ test("the desk: live book, SL/TP preview → confirm → progress → done, then
 
   // Close All Now: arm, then fire.
   await page.getByRole("button", { name: "Close all now" }).click();
-  await page.getByRole("button", { name: "Tap again to close 5" }).click();
+  await page.getByRole("button", { name: "Tap again: close all 5 XAUUSD" }).click();
   await expect(page.getByRole("status").filter({ hasText: /All 6 done/ })).toBeVisible();
   await expect(page.getByText("Nothing open on XAUUSD").first()).toBeVisible();
+
+  // History: both batches, newest first, with how they really ended.
+  await page.getByRole("link", { name: "History" }).click();
+  await expect(page.getByRole("heading", { name: "History", level: 1 })).toBeVisible();
+  const rows = page.getByRole("button", { expanded: false });
+  await expect(rows.filter({ hasText: "Close all now" })).toContainText("All done");
+  await expect(rows.filter({ hasText: "Set SL/TP" })).toContainText("All done");
+  await rows.filter({ hasText: "Set SL/TP" }).click();
+  await expect(page.getByText(/^run /)).toBeVisible();
+
+  // Command palette: Ctrl+K → type → Enter.
+  await page.keyboard.press("Control+k");
+  await page.getByRole("combobox").fill("sett");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+
+  // Settings: halt is one tap; the desk shows it. Resuming needs a fresh code; signing in minutes ago counts as one
+  // (5 min window), so here it resumes directly. The prompt path is covered by the server's re-auth tests.
+  await page.getByRole("button", { name: "Halt trading now" }).click();
+  await expect(page.getByText("trading is halted")).toBeVisible();
+  await page.getByRole("link", { name: "Desk" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Trading halted." })).toBeVisible();
+  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Resume trading" }).click();
+  await expect(page.getByText("trading is on")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Halt trading now" })).toBeVisible();
 });

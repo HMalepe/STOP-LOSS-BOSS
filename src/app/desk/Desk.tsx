@@ -1,6 +1,6 @@
 "use client";
-import { ChevronDown, Crosshair, PackagePlus } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { ArrowDownUp, ChevronDown, Crosshair, PackagePlus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ApiError, type PlanSummary, type Position } from "@/ui/api";
 import { AppShell, Panel } from "@/ui/AppShell";
 import { ArmButton } from "@/ui/ArmButton";
@@ -9,13 +9,23 @@ import { ConfirmSheet, type SheetPlan } from "@/ui/ConfirmSheet";
 import { Connection, type Link } from "@/ui/Connection";
 import { cx } from "@/ui/cx";
 import { HaltedBanner } from "@/ui/HaltedBanner";
-import { parsePrice, planSentence, signedMoney, spreadPoints, type Ask } from "@/ui/logic";
+import {
+  clockTime,
+  parsePrice,
+  planSentence,
+  signedMoney,
+  sortPositions,
+  spreadPoints,
+  type Ask,
+  type SortKey,
+} from "@/ui/logic";
 import { Metric } from "@/ui/Metric";
 import type { Mode } from "@/ui/ModeBadge";
 import { PriceInput } from "@/ui/PriceInput";
 import { ProgressView } from "@/ui/ProgressView";
 import { Segmented } from "@/ui/Segmented";
-import { EmptyState, ErrorState } from "@/ui/States";
+import { EmptyState, ErrorState, OfflineBanner } from "@/ui/States";
+import { useOnline } from "@/ui/useOnline";
 import { StatusBadge } from "@/ui/StatusBadge";
 import { useToast } from "@/ui/Toast";
 import { useNow } from "@/ui/useNow";
@@ -27,6 +37,12 @@ interface Pending {
   readonly plan: PlanSummary;
   readonly ask: Ask | null;
 }
+
+const SORT_LABEL: Record<SortKey, string> = {
+  loss: "Most loss",
+  profit: "Most profit",
+  ticket: "Oldest",
+};
 
 const fmt = (n: number | null, digits: number) => (n === null ? "—" : n.toFixed(digits));
 
@@ -41,11 +57,13 @@ export function Desk({
 }) {
   const toast = useToast();
   const now = useNow(500);
+  const online = useOnline();
   const [symbol, setSymbol] = useState(initialSymbol);
   const { state, positions, error, lastOk, refresh } = useDeskData(symbol);
   const [side, setSide] = useState<Side>("ALL");
   const [profitOnly, setProfitOnly] = useState(false);
   const [tab, setTab] = useState<Tab>("trigger");
+  const [sort, setSort] = useState<SortKey>("loss");
   const [trigger, setTrigger] = useState("");
   const [sl, setSl] = useState("");
   const [tp, setTp] = useState("");
@@ -57,11 +75,22 @@ export function Desk({
   const [executing, setExecuting] = useState(false);
   const [run, setRun] = useState<{ id: string; total: number } | null>(null);
   const live = useRun(run?.id ?? null, run?.total ?? 0);
+  // Results and refusals appear where the eye is, never below the fold or under the dock (design review).
+  const progressRef = useRef<HTMLDivElement>(null);
+  const problemRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (run !== null) progressRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [run]);
+  useEffect(() => {
+    if (problem !== null) problemRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [problem]);
 
   const focus = state?.focus?.symbol === symbol ? state.focus : undefined;
   const digits = focus?.spec.digits ?? 2;
   const halted = state?.killSwitch.halted === true;
-  const brokerDown = error !== null && (error.code === "BROKER_UNAVAILABLE" || error.code === "OFFLINE");
+  const brokerDown =
+    online && error !== null && (error.code === "BROKER_UNAVAILABLE" || error.code === "OFFLINE");
+  const blocked = halted || brokerDown || !online;
   const link: Link = error !== null ? "down" : lastOk !== null && now - lastOk > 3_000 ? "stale" : "live";
   const summary = state?.symbols.find((x) => x.symbol === symbol);
   const pl = summary === undefined ? 0 : summary.buy.profit + summary.sell.profit;
@@ -70,8 +99,9 @@ export function Desk({
     () => [...new Set([...symbols, ...(state?.symbols.map((x) => x.symbol) ?? []), symbol])].sort(),
     [symbols, state, symbol],
   );
-  const shown = (positions ?? []).filter(
-    (p) => (side === "ALL" || p.side === side) && (!profitOnly || p.profit > 0),
+  const shown = sortPositions(
+    (positions ?? []).filter((p) => (side === "ALL" || p.side === side) && (!profitOnly || p.profit > 0)),
+    sort,
   );
 
   const filter = useMemo(
@@ -197,8 +227,8 @@ export function Desk({
           breakdown: [
             { label: "Positions", value: String(pending.plan.count) },
             {
-              label: "Buys · sells",
-              value: `${String(pending.plan.breakdown.buys)} · ${String(pending.plan.breakdown.sells)}`,
+              label: "Sides",
+              value: `${String(pending.plan.breakdown.buys)} buys · ${String(pending.plan.breakdown.sells)} sells`,
             },
             ...(pending.plan.breakdown.asTP === undefined
               ? []
@@ -272,12 +302,17 @@ export function Desk({
       bottom={
         <ArmButton
           label={count === 0 ? `Nothing open on ${symbol}` : "Close all now"}
-          armedLabel={`Tap again to close ${String(count)}`}
+          armedLabel={`Tap again: close all ${String(count)} ${symbol}`}
           onFire={() => void closeAll()}
           disabled={count === 0 && (summary?.orders ?? 0) === 0}
         />
       }
     >
+      {online ? null : (
+        <div className="panel overflow-hidden">
+          <OfflineBanner />
+        </div>
+      )}
       {halted ? <HaltedBanner /> : null}
       {brokerDown ? (
         <ErrorState
@@ -318,16 +353,18 @@ export function Desk({
       </Panel>
 
       {pending === null && run !== null ? (
-        <ProgressView
-          progress={live.progress}
-          finished={live.finished}
-          items={live.items}
-          onRetry={() => void retry()}
-          onDone={() => {
-            setRun(null);
-            void refresh();
-          }}
-        />
+        <div ref={progressRef} className="scroll-mt-20">
+          <ProgressView
+            progress={live.progress}
+            finished={live.finished}
+            items={live.items}
+            onRetry={() => void retry()}
+            onDone={() => {
+              setRun(null);
+              void refresh();
+            }}
+          />
+        </div>
       ) : null}
 
       <div className="flex flex-col gap-3">
@@ -391,7 +428,7 @@ export function Desk({
               variant="primary"
               block
               loading={previewing}
-              disabled={halted || brokerDown}
+              disabled={blocked}
               icon={<Crosshair aria-hidden className="size-4" />}
               onClick={() => void preview()}
             >
@@ -421,7 +458,7 @@ export function Desk({
               variant="primary"
               block
               loading={previewing}
-              disabled={halted || brokerDown}
+              disabled={blocked}
               icon={<Crosshair aria-hidden className="size-4" />}
               onClick={() => void preview()}
             >
@@ -444,7 +481,7 @@ export function Desk({
               unit="pts"
               action="Preview"
               busy={previewing}
-              disabled={halted || brokerDown}
+              disabled={blocked}
               onGo={() => void helper("breakeven")}
             />
             <HelperRow
@@ -455,18 +492,37 @@ export function Desk({
               unit="pts"
               action="Preview"
               busy={previewing}
-              disabled={halted || brokerDown}
+              disabled={blocked}
               onGo={() => void helper("lock")}
             />
           </div>
         )}
       </Panel>
 
-      {problem === null ? null : <ProblemBox problem={problem} />}
+      {problem === null ? null : (
+        <div ref={problemRef}>
+          <ProblemBox problem={problem} />
+        </div>
+      )}
 
       <Panel
-        title="Open positions"
-        meta={positions === null ? "loading" : `${String(shown.length)} shown`}
+        title="Positions"
+        meta={
+          positions === null || lastOk === null ? "loading" : `${String(shown.length)} · ${clockTime(lastOk)}`
+        }
+        actions={
+          <button
+            type="button"
+            onClick={() => {
+              setSort((k) => (k === "loss" ? "profit" : k === "profit" ? "ticket" : "loss"));
+            }}
+            aria-label={`Sorted by ${SORT_LABEL[sort]}. Change sort`}
+            className="flex h-8 items-center gap-1.5 rounded-sm px-2 text-xs text-muted transition-colors hover:bg-raised hover:text-text"
+          >
+            <ArrowDownUp aria-hidden className="size-3.5" />
+            {SORT_LABEL[sort]}
+          </button>
+        }
         flush
       >
         {positions === null ? (
@@ -547,6 +603,8 @@ function HelperRow(p: {
 function ProblemBox({ problem }: { readonly problem: ApiError }) {
   const list = Array.isArray(problem.details)
     ? (problem.details as { message?: string; reason?: string; id?: string }[])
+        // Don't repeat what the headline already says.
+        .filter((d) => d.message === undefined || !problem.message.includes(d.message))
         .map((d) => (d.id === undefined ? "" : `#${d.id}: `) + (d.message ?? d.reason ?? ""))
         .filter((x) => x !== "")
     : [];
