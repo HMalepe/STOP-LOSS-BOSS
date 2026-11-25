@@ -682,6 +682,18 @@ describe("ADR-0009: entries with an unknown outcome are never doubled", () => {
 
   it("R6.7: a partial entry fill is done but flagged", async () => {
     const { s, broker, deps } = setup();
+    // The position exists with its stop (R5.3b verifies it); the volume read fails once → "volume unknown".
+    broker.seedPosition({
+      id: "77",
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 0.04,
+      openPrice: 1.0861,
+      sl: 1.08,
+      tp: null,
+      magic: 1,
+    });
+    vi.spyOn(broker, "getPositions").mockRejectedValueOnce(new Error("blip"));
     scripted(broker, "placeMarket", {
       op: "market",
       ok: true,
@@ -729,7 +741,17 @@ describe("ADR-0009: entries with an unknown outcome are never doubled", () => {
 
   it("R6.7: if the volume can't be read, say so", async () => {
     const { s, broker, deps } = setup();
-    vi.spyOn(broker, "getPositions").mockRejectedValue(new Error("down"));
+    broker.seedPosition({
+      id: "1",
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 0.04,
+      openPrice: 1.0861,
+      sl: 1.08,
+      tp: null,
+      magic: 1,
+    });
+    vi.spyOn(broker, "getPositions").mockRejectedValueOnce(new Error("down"));
     scripted(broker, "placeMarket", {
       op: "market",
       ok: true,
@@ -741,6 +763,22 @@ describe("ADR-0009: entries with an unknown outcome are never doubled", () => {
     expect((await collect([market("c17")], deps, s)).results[0]?.message).toBe(
       "partially filled (R6.7), volume unknown: check",
     );
+  });
+
+  it("R5.3b: a partial fill whose position can't be read at all is unknown (stop unverified), not done", async () => {
+    const { s, broker, deps } = setup();
+    vi.spyOn(broker, "getPositions").mockRejectedValue(new Error("down"));
+    scripted(broker, "placeMarket", {
+      op: "market",
+      ok: true,
+      class: "success",
+      code: RETCODE.DONE_PARTIAL,
+      stringCode: "TRADE_RETCODE_DONE_PARTIAL",
+      positionId: "1",
+    });
+    const r = (await collect([market("c18")], deps, s)).results[0];
+    expect(r?.outcome).toBe("unknown");
+    expect(r?.message).toMatch(/stop could not be verified/);
   });
 
   it("property: random faults, lost replies and delays never double a position or exceed 3 attempts", async () => {
@@ -1229,5 +1267,138 @@ describe("circuit breaker: a dead broker fails a batch fast instead of grinding"
     expect(results.every((r) => r.attempts > 0)).toBe(true);
     expect(results.some((r) => r.message.includes("broker unavailable"))).toBe(false);
     expect(breaker.state).toBe("open");
+  });
+});
+
+describe("R5.3b: an entry counts as filled only when its stop is verified on the position", () => {
+  const ops = (b: MockBroker) => b.calls.map((c) => c.op);
+  const positionsOf = (b: MockBroker, s: VirtualScheduler) => s.run(b.getPositions());
+
+  it("stop is there → done, and nothing extra is sent", async () => {
+    const { s, broker, deps } = setup();
+    const { results } = await collect([market("a0")], deps, s);
+    expect(results[0]).toMatchObject({
+      outcome: "done",
+      message: expect.not.stringContaining("stop") as unknown,
+    });
+    expect(ops(broker)).toEqual(["market"]);
+  });
+
+  it("the broker opened it WITHOUT the stop → the stop is set at once, then it's done (both levels, ADR-0008)", async () => {
+    const { s, broker, deps } = setup({ dropEntryStops: true });
+    const { results } = await collect([market("a0")], deps, s);
+    expect(ops(broker)).toEqual(["market", "modify"]);
+    expect(results[0]).toMatchObject({ outcome: "done" });
+    expect(results[0]?.message).toMatch(/stop was missing after the fill and has been set/);
+    const [p] = await positionsOf(broker, s);
+    expect(p?.sl).toBe(1.08);
+  });
+
+  it("a stop within one tick of the request is accepted as is; two ticks off is corrected", async () => {
+    for (const [sl, modifies] of [
+      [1.08001, 0],
+      [1.08002, 1],
+    ] as const) {
+      const { s, broker, deps } = setup();
+      broker.seedPosition({
+        symbol: "EURUSD",
+        side: "BUY",
+        volume: 0.1,
+        openPrice: 1.0861,
+        sl,
+        tp: null,
+        magic: 1,
+        id: "p-near",
+      });
+      scripted(broker, "placeMarket", {
+        op: "market",
+        ok: true,
+        class: "success",
+        code: RETCODE.DONE,
+        stringCode: "DONE",
+        message: "",
+        latencyMs: 1,
+        positionId: "p-near",
+      });
+      const { results } = await collect([market("a0")], deps, s);
+      expect(results[0]?.outcome, String(sl)).toBe("done");
+      expect(
+        ops(broker).filter((o) => o === "modify"),
+        String(sl),
+      ).toHaveLength(modifies);
+    }
+  });
+
+  it("can't set the stop twice → the position is CLOSED and the entry is reported reverted, not filled", async () => {
+    const { s, broker, deps } = setup({
+      dropEntryStops: true,
+      faults: { modify: [{ rate: 1, code: RETCODE.INVALID_STOPS }] },
+    });
+    const { results } = await collect([market("a0")], deps, s);
+    expect(ops(broker)).toEqual(["market", "modify", "modify", "close"]);
+    expect(results[0]).toMatchObject({ outcome: "failed", message: "entry reverted: stop could not be set" });
+    expect(await positionsOf(broker, s)).toHaveLength(0);
+  });
+
+  it("can't set the stop AND can't close → unknown, loudly: a naked position is open", async () => {
+    const { s, broker, deps } = setup({
+      dropEntryStops: true,
+      faults: { modify: [{ rate: 1, code: RETCODE.REJECT }], close: [{ rate: 1, code: RETCODE.REJECT }] },
+    });
+    const { results } = await collect([market("a0")], deps, s);
+    expect(results[0]?.outcome).toBe("unknown");
+    expect(results[0]?.message).toMatch(
+      /NO STOP and it could not be closed: close it in MT5 NOW \(position /,
+    );
+    expect(await positionsOf(broker, s)).toHaveLength(1);
+  });
+
+  it("the position isn't visible after the fill → unknown (can't verify the stop), never a plain done", async () => {
+    const { s, broker, deps } = setup();
+    scripted(broker, "placeMarket", {
+      op: "market",
+      ok: true,
+      class: "success",
+      code: RETCODE.DONE,
+      stringCode: "DONE",
+      message: "",
+      latencyMs: 1,
+      positionId: "ghost",
+    });
+    const { results } = await collect([market("a0")], deps, s);
+    expect(results[0]).toMatchObject({ outcome: "unknown" });
+    expect(results[0]?.message).toMatch(/filled, but its stop could not be verified/);
+  });
+
+  it("no stop requested (noStop) → nothing to verify; pending orders and close-now are untouched", async () => {
+    const { s, broker, deps } = setup({ dropEntryStops: true });
+    const noStop: ExecItem = {
+      op: "market",
+      req: {
+        symbol: "EURUSD",
+        side: "BUY",
+        volume: 0.1,
+        sl: null,
+        tp: null,
+        magic: 1,
+        comment: "OD:t",
+        clientId: "n",
+      },
+    };
+    const { results } = await collect([noStop], deps, s);
+    expect(results[0]?.outcome).toBe("done");
+    expect(ops(broker)).toEqual(["market"]);
+  });
+
+  it("a stop-fix still happens while aborted: a naked position must never be left behind", async () => {
+    const { s, broker, deps } = setup({ dropEntryStops: true });
+    const ctl = new AbortController();
+    const items = [market("a0"), market("a1")];
+    broker.onBeforeCall((c) => {
+      if (c.op === "market" && c.target === "a0") ctl.abort();
+    });
+    const { results } = await collect(items, { ...deps, signal: ctl.signal, concurrency: 1 }, s);
+    expect(results[0]?.outcome).toBe("done");
+    expect((await positionsOf(broker, s))[0]?.sl).toBe(1.08);
   });
 });

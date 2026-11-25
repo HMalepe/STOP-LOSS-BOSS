@@ -102,6 +102,16 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - ~~Lenient close-now parse~~ done; ~~health routes~~ done; history lookup by clientId (Phase 09).
 - ADR-0010 one-request panic close: verify on demo first.
 
+## Order Desk: code vs reviewed §9 (as of 2026-11-25)
+Done: R5.1 · R5.3b (stop verified or position closed) · R5.5b · R9.1 ids + reconcile on magic AND clientId · R9.2 rounding/commission/noStop · R9.4 (basic) · R9.5 · R9.6 domain.
+Still to build (doc wins):
+- R9.10 systemic failures (NO_MONEY, LIMIT_*, TRADE_DISABLED, MARKET_CLOSED) stop the rest of a batch ("not sent")
+- R9.7 execute re-reads free margin vs the stored requirement; R9.3 margin method (existing + new − existing, ×1.1 safety, warnings at 300% / worst case)
+- R9.4b refinements: slack + floor + outlier-excluded median (raw accounts have a 0-2 pt median); re-check between waves
+- R9.11 explicit fillingModes + fill-drift breaker (MAX_FILL_DRIFT_POINTS); R9.12 pending expiry (default end of day)
+- R4.3 cancel-first close-now is done by the UI session; presets (M4, R9.6) not built
+Known cost: R5.3b reads the positions list once per market entry (stream read, no credits); batch it per wave if a 500-order batch feels slow on demo.
+
 ## Open questions for the owner
 - ~~Q3~~ answered 2026-11-25: **no** fresh authenticator code before each live execute (session + live gates + caps stay the protection).
 - **Q2** (needed by Phase 03) Is your Exness demo **hedging**, which symbol(s) do you scalp, and is it connected to MetaApi yet? R0.2 detects netting at runtime anyway.

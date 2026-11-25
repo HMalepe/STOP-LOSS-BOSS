@@ -67,6 +67,11 @@ export interface MockBrokerOptions {
   /** Entries only: the order executes but the reply is lost (R6.5). */
   readonly lostReplyRate?: number;
   /**
+   * R5.3b worst case: a broker that accepts a market order but opens the position WITHOUT the requested SL/TP
+   * (market execution that ignores stops in the request). The position is naked until something sets the stop.
+   */
+  readonly dropEntryStops?: boolean;
+  /**
    * Zombie model (ADR-0009): with a lost reply, the order only becomes visible after this many ms (it shows as "in flight"
    * meanwhile), and `settled` resolves then. Infinity = the request is stuck: never lands, never settles. Default 0 = immediate.
    */
@@ -389,8 +394,8 @@ export class MockBroker implements BrokerProvider {
           side: req.side,
           volume: req.volume,
           openPrice: fill,
-          sl: req.sl,
-          tp: req.tp,
+          sl: this.#opts.dropEntryStops === true ? null : req.sl,
+          tp: this.#opts.dropEntryStops === true ? null : req.tp,
           magic: req.magic,
           comment: req.comment,
           clientId: req.clientId,
