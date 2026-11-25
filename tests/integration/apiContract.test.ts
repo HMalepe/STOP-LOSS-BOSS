@@ -195,7 +195,7 @@ describe("every error code in docs/04, from a real request", () => {
 
   it("SPREAD_TOO_WIDE: an entry batch fired into a spread over the symbol's max", async () => {
     const strict = makeTradingRoutes(s.guard, () =>
-      Promise.resolve({ ...svc, spreadGuard: { k: 3, maxPts: { EURUSD: 1 } } }),
+      Promise.resolve({ ...svc, spreadGuard: { ...svc.spreadGuard, maxPts: { EURUSD: 1 } } }),
     );
     const res = await strict.createPlan(
       post(

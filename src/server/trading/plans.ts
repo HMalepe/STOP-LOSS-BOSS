@@ -17,8 +17,9 @@ import {
   type PendingEntryItem,
 } from "@/domain/entries";
 import { toPoints } from "@/domain/price";
+import { marginVerdict, netMargin } from "@/domain/margin";
 import { riskToStop } from "@/domain/risk";
-import { spreadVerdict } from "@/domain/spread";
+import { DEFAULT_SPREAD, spreadVerdict } from "@/domain/spreadGuard";
 import type { PlanItem, Position, Quote, Skipped, SymbolSpec } from "@/domain/types";
 import { canonical } from "../audit/audit";
 import { sha256 } from "../auth/crypto";
@@ -365,10 +366,11 @@ async function createEntryPlan(
       },
     };
   }
-  const [account, quote, spec] = await Promise.all([
+  const [account, quote, spec, positions] = await Promise.all([
     svc.broker.getAccount(),
     svc.broker.getQuote(body.symbol),
     svc.specs.get(body.symbol),
+    svc.broker.getPositions(),
   ]);
   if (account.marginMode !== "HEDGING") {
     return { ok: false, error: { code: "PLAN_INVALID", message: ENTRIES_NEED_HEDGING, details: [] } };
@@ -426,7 +428,16 @@ async function createEntryPlan(
     return { ok: false, error: e.code === "PLAN_INVALID" ? { ...e, details: [] } : e };
   }
   const p = built.plan;
-  const checked = await checkRiskAndMargin(svc, account, spec, quote, p.items, caps.maxRiskPct);
+  const existingVolume = positions.filter((x) => x.symbol === body.symbol).reduce((v, x) => v + x.volume, 0);
+  const checked = await checkRiskAndMargin(
+    svc,
+    account,
+    existingVolume,
+    spec,
+    quote,
+    p.items,
+    caps.maxRiskPct,
+  );
   if (!checked.ok) return { ok: false, error: checked.error };
   const draft: StorableDraft = {
     risk: checked.risk,
@@ -436,7 +447,7 @@ async function createEntryPlan(
     items: p.items,
     skipped: [],
     breakdown: { buys: p.side === "BUY" ? p.items.length : 0, sells: p.side === "SELL" ? p.items.length : 0 },
-    warnings: [...p.warnings, ...spreadNotes(svc, quote, spec)],
+    warnings: [...p.warnings, ...checked.warnings, ...spreadNotes(svc, quote, spec)],
   };
   const summary = await storePlan(
     svc,
@@ -461,12 +472,19 @@ const money = (n: number, currency: string) => `${n.toFixed(2)} ${currency}`;
  */
 async function checkRiskAndMargin(
   svc: Pick<TradingServices, "broker" | "commissionPerLot">,
-  account: { readonly equity: number; readonly freeMargin: number; readonly currency: string },
+  account: {
+    readonly equity: number;
+    readonly freeMargin: number;
+    readonly margin: number;
+    readonly currency: string;
+  },
+  /** Total volume already open on this symbol (any side): the margin call is standalone, so we net it out. */
+  existingVolume: number,
   spec: SymbolSpec,
   quote: Quote,
   items: readonly (MarketEntryItem | PendingEntryItem)[],
   capPct: number,
-): Promise<{ ok: true; risk: RiskPreview } | { ok: false; error: PlanError }> {
+): Promise<{ ok: true; risk: RiskPreview; warnings: readonly string[] } | { ok: false; error: PlanError }> {
   const invalid = (message: string) => ({
     ok: false as const,
     error: { code: "PLAN_INVALID" as const, message, details: [] },
@@ -487,29 +505,32 @@ async function checkRiskAndMargin(
 
   const side =
     items[0]?.op === "market" ? items[0].side : items[0]?.type.startsWith("BUY") === true ? "BUY" : "SELL";
-  const worst = Math.max(
-    ...items.map((i) => (i.op === "pending" ? i.openPrice : i.side === "BUY" ? quote.ask : quote.bid)),
+  // One price for both calls (the batch's worst: highest for buys, lowest for sells), so price differences cancel and
+  // the difference is only the new volume. A ladder is bounded the same way: margin per lot is monotonic in price.
+  const prices = items.map((i) =>
+    i.op === "pending" ? i.openPrice : i.side === "BUY" ? quote.ask : quote.bid,
   );
-  const byLot = new Map<number, number>();
-  for (const i of items) byLot.set(i.volume, (byLot.get(i.volume) ?? 0) + 1);
-  let required = 0;
-  for (const [volume, count] of byLot) {
-    const m = await svc.broker.calculateMargin({ symbol: spec.symbol, side, volume, openPrice: worst });
-    if (m === null) {
-      return invalid(
-        "The broker can't calculate the margin for this batch right now, so it can't be checked. Nothing was stored.",
-      );
-    }
-    required += m * count;
-  }
-  required = Math.round(required * 100) / 100;
-  if (required > account.freeMargin) {
-    return invalid(
-      `This batch needs ${money(required, account.currency)} margin; free margin is ${money(account.freeMargin, account.currency)}.`,
-    );
-  }
+  const worst = side === "BUY" ? Math.max(...prices) : Math.min(...prices);
+  const newVolume = items.reduce((v, i) => v + i.volume, 0);
+  const margin = (volume: number) =>
+    svc.broker.calculateMargin({ symbol: spec.symbol, side, volume, openPrice: worst });
+  // The broker's calculateMargin is standalone (ignores what's already open), so ask for existing+new and existing-only
+  // and take the difference (at most 2 calls whatever the batch size).
+  const withNew = await margin(existingVolume + newVolume);
+  const existingOnly = existingVolume > 0 ? await margin(existingVolume) : 0;
+  const verdict = marginVerdict({
+    required: netMargin(withNew ?? undefined, existingOnly ?? undefined),
+    freeMargin: account.freeMargin,
+    equity: account.equity,
+    usedMargin: account.margin,
+    totalRisk: risk.total,
+    stopOutPct: null, // MetaApi's account information carries no stop-out level; the worst-case warning needs it
+  });
+  if (!verdict.ok) return invalid(verdict.message);
+  const required = Math.round(verdict.required * 100) / 100;
   return {
     ok: true,
+    warnings: verdict.warnings,
     risk: {
       currency: account.currency,
       toStop: risk.total,
@@ -527,19 +548,28 @@ export function spreadCheck(
   quote: Quote,
   spec: SymbolSpec,
 ) {
-  return spreadVerdict({
-    spreadPts: toPoints(quote.ask, spec) - toPoints(quote.bid, spec),
-    samples: svc.spread.samples(quote.symbol),
-    k: svc.spreadGuard.k,
-    maxPts: svc.spreadGuard.maxPts[quote.symbol],
+  const current = toPoints(quote.ask, spec) - toPoints(quote.bid, spec);
+  const g = svc.spreadGuard;
+  const verdict = spreadVerdict(current, svc.spread.samples(quote.symbol), {
+    ...DEFAULT_SPREAD,
+    k: g.k,
+    minSlackPoints: g.minSlackPoints,
+    floorPoints: g.floorPoints,
+    absoluteMaxPoints: g.maxPts[quote.symbol] ?? null,
   });
+  return { current, verdict };
 }
 
 function spreadNotes(svc: TradingServices, quote: Quote, spec: SymbolSpec): string[] {
-  const v = spreadCheck(svc, quote, spec);
+  const { current, verdict } = spreadCheck(svc, quote, spec);
   return [
-    v.summary,
-    ...(v.warning === undefined ? [] : [v.warning]),
-    ...(v.block ? ["The spread is too wide right now: firing would be refused until it narrows."] : []),
+    verdict.normal === null
+      ? `Spread now ${String(current)} pts.`
+      : `Spread now ${String(current)} pts, normal ${String(verdict.normal)} pts.`,
+    ...(verdict.ok
+      ? verdict.warning === undefined
+        ? []
+        : [verdict.warning]
+      : [`${verdict.message} Firing would be refused right now.`]),
   ];
 }

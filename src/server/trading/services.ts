@@ -47,7 +47,12 @@ export interface TradingServices {
   readonly capCeilings: Caps;
   /** R9.4 spread guard: recent spreads per symbol, K and the optional absolute max per symbol. */
   readonly spread: SpreadMonitor;
-  readonly spreadGuard: { readonly k: number; readonly maxPts: Readonly<Record<string, number>> };
+  readonly spreadGuard: {
+    readonly k: number;
+    readonly minSlackPoints: number;
+    readonly floorPoints: number;
+    readonly maxPts: Readonly<Record<string, number>>;
+  };
   /** R9.2: commission per lot in account currency, added to the risk (0 unless the account charges it). */
   readonly commissionPerLot: number;
   /** R9.1 APP_MAGIC_PREFIX: every Order Desk batch's magic is prefix × 10^9 + seq. */
@@ -274,7 +279,12 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
         };
       },
     }),
-    spreadGuard: { k: env.SPREAD_GUARD_K, maxPts: env.SPREAD_MAX_POINTS },
+    spreadGuard: {
+      k: env.SPREAD_GUARD_K,
+      minSlackPoints: env.SPREAD_MIN_SLACK_POINTS,
+      floorPoints: env.SPREAD_FLOOR_POINTS,
+      maxPts: env.SPREAD_MAX_POINTS,
+    },
     accountRef: env.TRADING_MODE === "mock" ? null : (env.METAAPI_ACCOUNT_ID ?? null),
   };
 }

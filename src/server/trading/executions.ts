@@ -299,11 +299,11 @@ async function entryGuard(
   if (svc.clock.now() - quote.time > MAX_QUOTE_AGE_MS) return { ok: false, refusal: STALE };
   // R9.4: the spread NOW, not at preview. Too wide → the whole batch is refused, zero calls.
   svc.spread.record(quote, spec);
-  const spread = spreadCheck(svc, quote, spec);
-  if (spread.block) {
+  const { verdict } = spreadCheck(svc, quote, spec);
+  if (!verdict.ok) {
     return {
       ok: false,
-      refusal: { code: "SPREAD_TOO_WIDE", message: spread.reason ?? "Spread too wide. Nothing was sent." },
+      refusal: { code: "SPREAD_TOO_WIDE", message: `${verdict.message} Nothing was sent.` },
     };
   }
   // R9.7: free margin NOW vs what the preview needed. A plan stored without a requirement skips this.

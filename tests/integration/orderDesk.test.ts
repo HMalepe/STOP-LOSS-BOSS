@@ -231,9 +231,9 @@ describe("M3b: risk to SL and margin, before anything is stored (OD6, R9.2, R9.3
     );
     const big = await preview(
       { ...MARKET, stopLoss: undefined, noStop: true },
-      routesWith({ calculateMargin: () => Promise.resolve(1_000_000) }),
+      routesWith({ calculateMargin: (o) => Promise.resolve(o.volume > 0.5 ? 1_000_000 : 0) }),
     );
-    expect((await errorOf(big)).message).toMatch(/needs .* margin; free margin is/);
+    expect((await errorOf(big)).message).toMatch(/needs .* margin; you have .* free/);
   });
 
   it("noStop together with a stop loss is a contradiction → 400, for batches and ladders", async () => {
@@ -269,14 +269,17 @@ describe("M3b: risk to SL and margin, before anything is stored (OD6, R9.2, R9.3
   });
 
   it("margin over free margin → refused; the broker can't compute it → refused, never estimated", async () => {
-    const big = await preview(MARKET, routesWith({ calculateMargin: () => Promise.resolve(1_000_000) }));
-    expect((await errorOf(big)).message).toMatch(/needs .* margin; free margin is/);
+    const big = await preview(
+      MARKET,
+      routesWith({ calculateMargin: (o) => Promise.resolve(o.volume > 0.5 ? 1_000_000 : 0) }),
+    );
+    expect((await errorOf(big)).message).toMatch(/needs .* margin; you have .* free/);
     const unknown = await preview(MARKET, routesWith({ calculateMargin: () => Promise.resolve(null) }));
     expect(unknown.status).toBe(422);
-    expect((await errorOf(unknown)).message).toMatch(/can't calculate the margin/);
+    expect((await errorOf(unknown)).message).toBe("Can't verify the margin for this batch, so it's blocked.");
   });
 
-  it("margin is asked once per distinct lot (a 3-order batch is one broker call), at the worst price", async () => {
+  it("R9.3: margin is the broker's figure for existing+new minus existing-only, plus 10%: at most 2 calls, any ladder size", async () => {
     const asked: { volume: number; openPrice: number }[] = [];
     const r = routesWith({
       calculateMargin: (o) => {
@@ -284,12 +287,36 @@ describe("M3b: risk to SL and margin, before anything is stored (OD6, R9.2, R9.3
         return broker.calculateMargin(o);
       },
     });
+    // The demo book already holds 0.5 lot EURUSD, so: (0.5 + 0.15) and 0.5, both priced at the batch's worst price.
     await preview(MARKET, r);
-    expect(asked).toEqual([{ volume: 0.05, openPrice: 1.08611 }]);
+    expect(asked).toEqual([
+      { volume: 0.65, openPrice: 1.08611 },
+      { volume: 0.5, openPrice: 1.08611 },
+    ]);
     asked.length = 0;
     await preview({ ...LADDER, lots: { mode: "scaled", start: 0.1, end: 0.3 } }, r);
-    expect(asked.map((a) => a.volume)).toEqual([0.1, 0.2, 0.3]);
-    expect(new Set(asked.map((a) => a.openPrice))).toEqual(new Set([1.085]));
+    expect(asked).toHaveLength(2); // scaled lots no longer cost a call per level
+    expect(asked.map((a) => a.volume)).toEqual([0.5 + 0.1 + 0.2 + 0.3, 0.5]);
+    const net =
+      ((await broker.calculateMargin({ symbol: "EURUSD", side: "BUY", volume: 1.1, openPrice: 1.085 })) ??
+        0) -
+      ((await broker.calculateMargin({ symbol: "EURUSD", side: "BUY", volume: 0.5, openPrice: 1.085 })) ?? 0);
+    const summary = planSummary.parse(
+      await (await preview({ ...LADDER, lots: { mode: "scaled", start: 0.1, end: 0.3 } })).json(),
+    );
+    expect(summary.risk?.marginRequired).toBeCloseTo(net * 1.1, 1);
+  });
+
+  it("R9.3 no stop: the margin level after the batch must stay above 500%; a thinly-margined no-stop batch is refused", async () => {
+    const { equity, margin } = await broker.getAccount();
+    // Required margin that leaves equity / (used + required) at about 400%.
+    const required = equity / 4 - margin;
+    const thin = routesWith({
+      calculateMargin: (o) => Promise.resolve(o.volume > 0.5 ? required / 1.1 : 0),
+    });
+    const res = await preview({ ...MARKET, stopLoss: undefined, noStop: true }, thin);
+    expect(res.status).toBe(422);
+    expect((await errorOf(res)).message).toMatch(/With no stop the margin level must stay above 500%/);
   });
 
   it("no tick value from the feed → 503, never a guessed risk", async () => {
@@ -317,7 +344,9 @@ describe("M3c: spread guard at fire time (R9.4)", () => {
 
   it("preview says spread now vs normal; a cold symbol warns but never blocks", async () => {
     const cold = (await (await preview(MARKET)).json()) as { warnings: string[] };
-    expect(cold.warnings.some((w) => w.startsWith("Spread guard can't judge yet"))).toBe(true);
+    expect(cold.warnings).toContain(
+      "Not enough recent prices to know the normal spread, so the spread guard is off for this batch.",
+    );
     await warm();
     const res = (await (await preview(MARKET)).json()) as { warnings: string[] };
     expect(res.warnings).toContain("Spread now 10 pts, normal 10 pts.");
@@ -332,17 +361,19 @@ describe("M3c: spread guard at fire time (R9.4)", () => {
     expect(res.status).toBe(409);
     const e = await errorOf(res);
     expect(e.code).toBe("SPREAD_TOO_WIDE");
-    expect(e.message).toBe("Spread is 40 pts, normal is 10 pts (limit 3× = 30 pts). Nothing was sent.");
+    expect(e.message).toBe(
+      "Spread is 40 points; it's normally 10. Refused until it settles. Nothing was sent.",
+    );
     expect(broker.calls.length).toBe(calls);
   });
 
   it("R9.4a absolute max per symbol blocks even without history", async () => {
     const strict = makeTradingRoutes(s.guard, () =>
-      Promise.resolve({ ...svc, spreadGuard: { k: 3, maxPts: { EURUSD: 5 } } }),
+      Promise.resolve({ ...svc, spreadGuard: { ...svc.spreadGuard, maxPts: { EURUSD: 5 } } }),
     );
     const id = await planId(MARKET, strict);
     const { res } = await run(id, strict);
-    expect((await errorOf(res)).message).toMatch(/over this symbol's max of 5 pts/);
+    expect((await errorOf(res)).message).toBe("Spread is 10 points; the limit is 5. Nothing was sent.");
   });
 
   it("a normal spread fires", async () => {

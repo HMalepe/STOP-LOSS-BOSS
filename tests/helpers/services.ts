@@ -33,7 +33,7 @@ export function mockServices(
     magicPrefix: 7731,
     commissionPerLot: 0,
     spread: new SpreadMonitor({ windowMs: 300_000, clock, every: () => () => undefined }),
-    spreadGuard: { k: 3, maxPts: {} },
+    spreadGuard: { k: 3, minSlackPoints: 5, floorPoints: 10, maxPts: {} },
     capCeilings: { maxOrdersPerAction: 100, maxTotalLots: 5, maxRiskPct: 2, maxPositionsPerBatch: 1_000 },
     ...over,
   };

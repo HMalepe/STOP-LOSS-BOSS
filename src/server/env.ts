@@ -63,6 +63,9 @@ const schema = z
     // Adaptive spread guard (R9.4b).
     SPREAD_GUARD_K: z.coerce.number().min(1.5).max(20).default(3),
     SPREAD_WINDOW_SEC: int(30, 3600, 300),
+    // R9.4b: on raw/zero accounts the median is 0-2 points, so K x median alone would block everything.
+    SPREAD_MIN_SLACK_POINTS: int(0, 1000, 5),
+    SPREAD_FLOOR_POINTS: int(0, 10_000, 10),
     // R9.4a absolute max per symbol, off by default: "EURUSD:30,XAUUSD:80" (points).
     SPREAD_MAX_POINTS: z
       .string()

@@ -24,6 +24,8 @@ MAX_RISK_PCT_PER_ACTION=2   # % of equity at risk to SL, per action (R9.2)
 SPREAD_GUARD_K=3            # adaptive spread guard multiplier (R9.4b)
 SPREAD_WINDOW_SEC=300
 COMMISSION_PER_LOT=0         # R9.2: account-currency commission per lot, added to risk (raw/zero accounts)
+SPREAD_MIN_SLACK_POINTS=5    # R9.4b: the limit is at least normal + this (raw accounts have a 0-2 pt median)
+SPREAD_FLOOR_POINTS=10       # R9.4b: ...and never below this many points
 SPREAD_MAX_POINTS=           # optional R9.4a absolute max per symbol, e.g. EURUSD:30,XAUUSD:80 (off by default)
 WORKER_URL= / WORKER_SHARED_SECRET=   # Phase 9
 NEXT_MANUAL_SIG_HANDLE=true # required outside mock: lets our shutdown drain run (see Graceful shutdown)
