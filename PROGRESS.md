@@ -18,7 +18,7 @@
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
 | 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
 | 07 | UI | ✅ | "The Observatory" design system (docs/12), controls, sign-in, live desk, History, Settings/kill switch, palette, PWA + offline. 13 e2e + screenshot set (docs/screens/phone). Design review: real issues fixed, 2 were screenshot-timing artifacts |
-| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | Backend: M1 ✅ domain market batch (OD1) · M2 ✅ domain ladder (OD2) · M3a ✅ entries preview→execute (batch seq, R0.2, §7 re-check) · M3b ✅ risk to SL + margin · M3c ✅ spread guard · ✅ restart reconcile of entries · M4 presets. UI for entries not built yet |
+| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | §9 rules ✅ reviewed by trading-systems (8 must-fix folded in). Backend built before that review: M1 ✅ market batch · M2 ✅ ladder · M3a ✅ entries preview→execute · M3b ✅ risk + margin · M3c ✅ spread guard · ✅ restart reconcile. **Code vs revised §9: see gaps list** · M4 presets |
 | 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
 | 10 | Hardening and go-live | ⬜ | |
@@ -80,6 +80,13 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - 2026-11-22: R7.1: modify items carry `before`; either level changed → skipped
 - 2026-11-22: Event stream: sequence numbers for resume, bounded subscriber buffers, history released after 1 h
 - 2026-11-21: Deferred: R1.1 batch filter → Phase 08 with R9.1; stale-quote check → drift guard §7 (Phase 04/06)
+
+## Carry-overs to Phase 08 (from the §9 rules review, 2026-11-25)
+- **R4.3 re-sweep** (M5): close-now now cancels first; still to build: after closing, re-sweep the book for matching orders/positions that appeared (≤ 3 passes), "done" only when empty.
+- **R5.3b** stop verification after every entry (repair SL or close the position), **R9.10** systemic-failure abort, **R9.11** fill-drift breaker, **R9.12** pending expiry: executor work in M2/M3/M6.
+- **[T] on demo before live:** magic > 2^32 round-trips; comment + clientId come back; account default magic is 0; market order with SL/TP is atomic; calculateMargin vs real margin change and its credit cost; cancel-while-frozen; Exness count limits.
+- Add retcodes 10013/10015/10017/10018/10019/10026/10027/10030/10033/10034/10040/10046 to src/broker/retcodes.ts after re-verifying on the MT5 page.
+- `Quote` needs `lossTickValue` (price feed) and the adapter must subscribe to market data per symbol.
 
 ## Carry-overs to Phase 06 (from the Phase 03, 04 and 05 reviews)
 - ~~Wire the gates~~ done on execute (M3); close-now in M4.
