@@ -70,11 +70,17 @@ export interface MarketOrderReq extends Levels, EntryTag {
   readonly volume: number;
 }
 
+/** R9.12: how long a pending order lives. A ladder always states it; GTC is an explicit opt-in. */
+export type PendingExpiry =
+  { readonly type: "DAY" } | { readonly type: "GTC" } | { readonly type: "SPECIFIED"; readonly time: string };
+
 export interface PendingOrderReq extends Levels, EntryTag {
   readonly symbol: string;
   readonly type: PendingType;
   readonly volume: number;
   readonly openPrice: number;
+  /** Omitted = the broker's default (GTC on most servers). Entries from the Order Desk always set it. */
+  readonly expiry?: PendingExpiry;
 }
 
 /** R9.3: what to ask the broker's margin calculator. BUY or SELL only (a pending is priced as a market order at its own price). */

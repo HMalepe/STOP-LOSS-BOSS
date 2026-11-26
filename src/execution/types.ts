@@ -54,6 +54,8 @@ export interface Summary extends Progress {
   readonly finishedAt: number;
   readonly retries: number;
   readonly aborted: boolean;
+  /** R9.10: set when a systemic refusal (no money, trading disabled, order limits…) stopped the rest of the batch. */
+  readonly haltedBy?: string;
 }
 
 export type ExecEvent =

@@ -12,6 +12,7 @@ import {
   type BrokerHealth,
   type BrokerProvider,
   type MarginReq,
+  type PendingExpiry,
   type Levels,
   type MarketOrderReq,
   type PendingOrderReq,
@@ -70,6 +71,19 @@ const FATAL_CONNECT_ERRORS = new Set([
 
 function hasCode(e: unknown): e is { numericCode?: unknown; stringCode?: unknown } {
   return typeof e === "object" && e !== null && ("numericCode" in e || "stringCode" in e);
+}
+
+/** R9.12: SDK ExpirationOptions. DAY and GTC carry no time; SPECIFIED does. */
+function expirationOption(expiry: PendingExpiry | undefined): Pick<TradeOptionsPort, "expiration"> {
+  if (expiry === undefined) return {};
+  switch (expiry.type) {
+    case "DAY":
+      return { expiration: { type: "ORDER_TIME_DAY" } };
+    case "GTC":
+      return { expiration: { type: "ORDER_TIME_GTC" } };
+    case "SPECIFIED":
+      return { expiration: { type: "ORDER_TIME_SPECIFIED", time: new Date(expiry.time) } };
+  }
 }
 
 function errorName(e: unknown): string {
@@ -275,7 +289,7 @@ export class MetaApiBroker implements BrokerProvider {
   placePending(req: PendingOrderReq): Promise<TradeResult> {
     const sl = req.sl ?? undefined;
     const tp = req.tp ?? undefined;
-    const o = tradeOptions(req);
+    const o = { ...tradeOptions(req), ...expirationOption(req.expiry) };
     const c = this.#conn;
     const send: Record<PendingOrderReq["type"], (() => Promise<unknown>) | null> = {
       BUY_LIMIT: () => c.createLimitBuyOrder(req.symbol, req.volume, req.openPrice, sl, tp, o),

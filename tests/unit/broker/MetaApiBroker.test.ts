@@ -705,3 +705,44 @@ describe("R9.2 / R9.3: tick value and margin", () => {
     });
   });
 });
+
+/** The options object of the last limit-buy call (the fake's typed arity is zero, so read it as unknown). */
+const lastOptions = (c: { createLimitBuyOrder: { mock: { lastCall?: unknown } } }): unknown =>
+  (c.createLimitBuyOrder.mock.lastCall as unknown[] | undefined)?.[5];
+
+describe("R9.12 pending expiry reaches the broker", () => {
+  const req = {
+    symbol: "EURUSD",
+    type: "BUY_LIMIT" as const,
+    volume: 0.1,
+    openPrice: 1.08,
+    sl: 1.07,
+    tp: 1.09,
+    magic: 5,
+    comment: "OD:1",
+    clientId: "1000",
+  };
+  it("DAY, GTC and SPECIFIED map to ORDER_TIME_*; SPECIFIED carries its time; omitted sends no expiration", async () => {
+    const c = fake();
+    const b = await MetaApiBroker.connect(() => Promise.resolve(c));
+    await b.placePending({ ...req, expiry: { type: "DAY" } });
+    expect(c.createLimitBuyOrder).toHaveBeenLastCalledWith(
+      "EURUSD",
+      0.1,
+      1.08,
+      1.07,
+      1.09,
+      expect.objectContaining({ magic: 5, clientId: "1000", expiration: { type: "ORDER_TIME_DAY" } }),
+    );
+    await b.placePending({ ...req, expiry: { type: "GTC" } });
+    expect(lastOptions(c)).toMatchObject({
+      expiration: { type: "ORDER_TIME_GTC" },
+    });
+    await b.placePending({ ...req, expiry: { type: "SPECIFIED", time: "2026-12-01T10:00:00.000Z" } });
+    expect(lastOptions(c)).toMatchObject({
+      expiration: { type: "ORDER_TIME_SPECIFIED", time: new Date("2026-12-01T10:00:00.000Z") },
+    });
+    await b.placePending(req);
+    expect(lastOptions(c)).not.toHaveProperty("expiration");
+  });
+});

@@ -18,6 +18,8 @@ export interface TradeOptionsPort {
   readonly magic: number;
   readonly comment: string;
   readonly clientId: string;
+  /** Pending orders only (PendingTradeOptions.expiration). */
+  readonly expiration?: { readonly type: string; readonly time?: Date };
 }
 
 export interface MetaApiConnectionPort {

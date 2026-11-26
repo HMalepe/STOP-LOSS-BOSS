@@ -18,6 +18,7 @@ import {
   type RetryPolicy,
 } from "./retries";
 import type { Scheduler } from "./scheduler";
+import { RETCODE } from "@/broker/retcodes";
 import { targetOf, type ExecEvent, type ExecItem, type ItemResult, type Progress } from "./types";
 
 export interface ExecuteDeps {
@@ -40,6 +41,21 @@ export interface ExecuteDeps {
   readonly priority?: Priority;
 }
 
+/** R9.10: refusals that repeat for every remaining entry. */
+const SYSTEMIC: ReadonlySet<number> = new Set([
+  RETCODE.NO_MONEY,
+  RETCODE.LIMIT_ORDERS,
+  RETCODE.LIMIT_VOLUME,
+  RETCODE.LIMIT_POSITIONS,
+  RETCODE.TRADE_DISABLED,
+  RETCODE.MARKET_CLOSED,
+  RETCODE.SERVER_DISABLES_AT,
+  RETCODE.CLIENT_DISABLES_AT,
+  RETCODE.LONG_ONLY,
+  RETCODE.SHORT_ONLY,
+  RETCODE.CLOSE_ONLY,
+]);
+
 export function execute(items: readonly ExecItem[], deps: ExecuteDeps): AsyncIterable<ExecEvent> {
   const channel = new Channel<ExecEvent>();
   // run() handles every item's errors itself; this guard only exists so a bug can never leave a consumer hanging.
@@ -60,7 +76,18 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
   let next = 0;
 
   const progress = (): Progress => ({ total: items.length, ...counts });
+  // R9.10: a refusal that will repeat for every remaining entry (and cost 10 credits each) stops the batch.
+  let haltedBy: string | undefined;
   const finish = (r: ItemResult) => {
+    if (
+      haltedBy === undefined &&
+      r.outcome === "failed" &&
+      (r.op === "market" || r.op === "pending") &&
+      r.code !== null &&
+      SYSTEMIC.has(r.code)
+    ) {
+      haltedBy = r.stringCode === "" ? String(r.code) : r.stringCode;
+    }
     results[r.index] = r;
     counts.finished += 1;
     counts[r.outcome] += 1;
@@ -80,7 +107,7 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
 
   const worker = async () => {
     for (;;) {
-      if (deps.signal?.aborted === true) return;
+      if (deps.signal?.aborted === true || haltedBy !== undefined) return;
       const index = next;
       const item = items[index];
       if (item === undefined) return;
@@ -113,7 +140,18 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
 
   // Anything never started (abort) is reported, so the counts always add up to the total.
   for (const [index, item] of items.entries()) {
-    if (results[index] === undefined) finish(blank(index, item, "skipped", "aborted before it was sent"));
+    if (results[index] === undefined) {
+      finish(
+        blank(
+          index,
+          item,
+          "skipped",
+          haltedBy === undefined
+            ? "aborted before it was sent"
+            : `not sent: the batch stopped after ${haltedBy} (it would fail the same way)`,
+        ),
+      );
+    }
   }
 
   out.push({
@@ -124,6 +162,7 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
       finishedAt: deps.scheduler.now(),
       retries,
       aborted: deps.signal?.aborted === true,
+      ...(haltedBy === undefined ? {} : { haltedBy }),
     },
   });
   out.close();
