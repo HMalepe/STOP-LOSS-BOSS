@@ -5,6 +5,8 @@ import type { MockBroker } from "@/broker/MockBroker";
 import type { Db } from "@/server/db/sql";
 import { buildRunner, demoMockBroker, type TradingServices } from "@/server/trading/services";
 import { SpecCache } from "@/server/trading/specCache";
+import { SpreadSampler } from "@/server/trading/spread";
+import { DEFAULT_SPREAD } from "@/domain/spreadGuard";
 
 export function mockServices(
   db: Db,
@@ -22,6 +24,13 @@ export function mockServices(
     runner: buildRunner(b, db, clock),
     accountRef: null,
     maxPerBatch: 1_000,
+    entry: {
+      caps: { maxOrders: 100, maxTotalLots: 50, maxRiskPct: 5 },
+      commissionPerLot: 0,
+      magicPrefix: 7731,
+      spread: DEFAULT_SPREAD,
+      sampler: new SpreadSampler(300),
+    },
     ...over,
   };
   return { svc, broker };

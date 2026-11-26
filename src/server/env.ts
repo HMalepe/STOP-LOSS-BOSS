@@ -60,6 +60,13 @@ const schema = z
     MAX_TOTAL_LOTS: z.coerce.number().positive().max(100).default(5),
     MAX_RISK_PCT_PER_ACTION: z.coerce.number().positive().max(10).default(2),
 
+    // R9.2: per-lot commission isn't on the spec or the price feed. Set it on raw/zero accounts.
+    COMMISSION_PER_LOT: z.coerce.number().min(0).max(1000).default(0),
+    // R9.4a absolute spread limit in points (off by default), and the adaptive guard's floor and slack (R9.4b).
+    SPREAD_MAX_POINTS: z.coerce.number().int().positive().optional(),
+    SPREAD_MIN_SLACK_POINTS: int(0, 10_000, 5),
+    SPREAD_FLOOR_POINTS: int(0, 10_000, 10),
+
     // Adaptive spread guard (R9.4b).
     SPREAD_GUARD_K: z.coerce.number().min(1.5).max(20).default(3),
     SPREAD_WINDOW_SEC: int(30, 3600, 300),

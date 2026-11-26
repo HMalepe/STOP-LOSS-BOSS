@@ -146,7 +146,7 @@ export function ladderLevels(
 }
 
 /** R5.5: is this level on the right side of the market for its type, at least d away? Strict, like §2. */
-function levelProblem(
+export function levelProblem(
   type: LadderType,
   p: Points,
   m: Market,

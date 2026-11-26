@@ -47,19 +47,42 @@ export const planBody = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("lock"), filter, distancePoints: POINTS.min(1) }),
 ]);
 export type PlanBody = z.infer<typeof planBody>;
-export const LATER_ACTIONS = new Set(["market", "ladder", "cancel"]);
+export const LATER_ACTIONS = new Set(["cancel"]);
+
+/** What an entry plan adds to its summary (risk, margin, spread, expiry, batch number). */
+export interface EntrySummary {
+  readonly kind: "market" | "ladder";
+  readonly side: "BUY" | "SELL";
+  readonly totalLots: number;
+  readonly risk: {
+    readonly total: number | null;
+    readonly unlimited: boolean;
+    readonly pctOfEquity: number | null;
+  };
+  readonly margin: { readonly required: number; readonly freeMargin: number };
+  readonly spread: { readonly nowPoints: number; readonly normalPoints: number | null };
+  readonly expiry?: { readonly type: "DAY" | "GTC" | "SPECIFIED"; readonly time?: string };
+  readonly requestedLevels?: number;
+  readonly duplicatesRemoved?: number;
+  /** R9.1: set when the plan is stored. */
+  readonly batchSeq?: number;
+}
 
 export interface PlanSummary {
   readonly id: string;
-  readonly action: PlanDraft["action"];
+  readonly action: PlanDraft["action"] | "market" | "ladder";
   readonly symbol: string;
   readonly expiresAt: string;
   readonly quote: { readonly bid: number; readonly ask: number; readonly time: string } | null;
   readonly count: number;
   readonly skipped: readonly Skipped[];
-  readonly breakdown: PlanDraft["breakdown"] & { readonly totalLots?: number };
+  readonly breakdown: PlanDraft["breakdown"] & {
+    readonly totalLots?: number;
+    readonly prices?: readonly number[];
+  };
   readonly warnings: readonly string[];
   readonly mode: TradingMode;
+  readonly entry?: EntrySummary;
 }
 
 export type CreatePlanResult =
@@ -95,7 +118,7 @@ function toRequest(body: PlanBody): PlanRequest {
 }
 
 /** What execute checks against: the exact broker calls, in order. */
-export function itemsHash(items: readonly PlanItem[]): string {
+export function itemsHash(items: readonly unknown[]): string {
   return sha256(canonical(items));
 }
 

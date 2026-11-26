@@ -110,7 +110,7 @@ export type RetryResult =
   | { readonly ok: true; readonly summary: PlanSummary }
   | {
       readonly ok: false;
-      readonly code: "NOT_FOUND" | "STILL_RUNNING" | "NOTHING_TO_RETRY";
+      readonly code: "NOT_FOUND" | "STILL_RUNNING" | "NOTHING_TO_RETRY" | "NOT_FOR_ENTRIES";
       readonly message: string;
     };
 
@@ -169,6 +169,15 @@ export async function retryFailed(
         unknown > 0
           ? `Nothing failed. ${String(unknown)} ended unknown: check those in MT5, they're never retried automatically.`
           : "Nothing failed.",
+    };
+  }
+  if (original.summary.action === "market" || original.summary.action === "ladder") {
+    // R9.8: only entries CONFIRMED absent may be re-sent (an unknown one might be on the book). That check arrives with batch management.
+    return {
+      ok: false,
+      code: "NOT_FOR_ENTRIES",
+      message:
+        "Retrying failed entries needs a check that each one really didn't fill. Check MT5 and place them again for now.",
     };
   }
   const symbol = original.summary.symbol;

@@ -125,8 +125,8 @@ describe("POST /api/plans", () => {
   });
 
   it.each([
-    [{ action: "market", symbol: "XAUUSD", side: "BUY", count: 5, volume: 0.1 }, /Order Desk/],
-    [{ action: "ladder" }, /Order Desk/],
+    [{ action: "market" }, /^symbol:/],
+    [{ action: "ladder", symbol: "XAUUSD" }, /^type:/],
     [{ action: "cancel", filter: gold() }, /Order Desk/],
     [{ action: "levels", filter: gold() }, /SL, a TP, or both/],
     [{ action: "levels", filter: gold(), stopLoss: -1 }, /^stopLoss:/],

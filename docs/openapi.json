@@ -855,61 +855,186 @@
             "application/json": {
               "schema": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
-                "oneOf": [
+                "anyOf": [
                   {
-                    "type": "object",
-                    "properties": {
-                      "action": {
-                        "type": "string",
-                        "const": "levels"
-                      },
-                      "filter": {
+                    "oneOf": [
+                      {
                         "type": "object",
                         "properties": {
-                          "symbol": {
+                          "action": {
                             "type": "string",
-                            "minLength": 1,
-                            "maxLength": 32,
-                            "pattern": "^[A-Za-z0-9._#-]+$"
+                            "const": "levels"
                           },
-                          "side": {
-                            "type": "string",
-                            "enum": ["ALL", "BUY", "SELL"]
+                          "filter": {
+                            "type": "object",
+                            "properties": {
+                              "symbol": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32,
+                                "pattern": "^[A-Za-z0-9._#-]+$"
+                              },
+                              "side": {
+                                "type": "string",
+                                "enum": ["ALL", "BUY", "SELL"]
+                              },
+                              "magic": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "inProfitOnly": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": ["symbol", "side"],
+                            "additionalProperties": false
                           },
-                          "magic": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
+                          "stopLoss": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           },
-                          "inProfitOnly": {
-                            "type": "boolean"
+                          "takeProfit": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
                           }
                         },
-                        "required": ["symbol", "side"],
+                        "required": ["action", "filter"],
                         "additionalProperties": false
                       },
-                      "stopLoss": {
-                        "type": "number",
-                        "exclusiveMinimum": 0
+                      {
+                        "type": "object",
+                        "properties": {
+                          "action": {
+                            "type": "string",
+                            "const": "closeAt"
+                          },
+                          "filter": {
+                            "type": "object",
+                            "properties": {
+                              "symbol": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32,
+                                "pattern": "^[A-Za-z0-9._#-]+$"
+                              },
+                              "side": {
+                                "type": "string",
+                                "enum": ["ALL", "BUY", "SELL"]
+                              },
+                              "magic": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "inProfitOnly": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": ["symbol", "side"],
+                            "additionalProperties": false
+                          },
+                          "price": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          }
+                        },
+                        "required": ["action", "filter", "price"],
+                        "additionalProperties": false
                       },
-                      "takeProfit": {
-                        "type": "number",
-                        "exclusiveMinimum": 0
+                      {
+                        "type": "object",
+                        "properties": {
+                          "action": {
+                            "type": "string",
+                            "const": "breakeven"
+                          },
+                          "filter": {
+                            "type": "object",
+                            "properties": {
+                              "symbol": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32,
+                                "pattern": "^[A-Za-z0-9._#-]+$"
+                              },
+                              "side": {
+                                "type": "string",
+                                "enum": ["ALL", "BUY", "SELL"]
+                              },
+                              "magic": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "inProfitOnly": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": ["symbol", "side"],
+                            "additionalProperties": false
+                          },
+                          "offsetPoints": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1000000
+                          }
+                        },
+                        "required": ["action", "filter", "offsetPoints"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "action": {
+                            "type": "string",
+                            "const": "lock"
+                          },
+                          "filter": {
+                            "type": "object",
+                            "properties": {
+                              "symbol": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32,
+                                "pattern": "^[A-Za-z0-9._#-]+$"
+                              },
+                              "side": {
+                                "type": "string",
+                                "enum": ["ALL", "BUY", "SELL"]
+                              },
+                              "magic": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "inProfitOnly": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": ["symbol", "side"],
+                            "additionalProperties": false
+                          },
+                          "distancePoints": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1000000
+                          }
+                        },
+                        "required": ["action", "filter", "distancePoints"],
+                        "additionalProperties": false
                       }
-                    },
-                    "required": ["action", "filter"],
-                    "additionalProperties": false
+                    ]
                   },
                   {
-                    "type": "object",
-                    "properties": {
-                      "action": {
-                        "type": "string",
-                        "const": "closeAt"
-                      },
-                      "filter": {
+                    "oneOf": [
+                      {
                         "type": "object",
                         "properties": {
+                          "action": {
+                            "type": "string",
+                            "const": "market"
+                          },
                           "symbol": {
                             "type": "string",
                             "minLength": 1,
@@ -918,109 +1043,257 @@
                           },
                           "side": {
                             "type": "string",
-                            "enum": ["ALL", "BUY", "SELL"]
+                            "enum": ["BUY", "SELL"]
                           },
-                          "magic": {
+                          "count": {
                             "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
+                            "minimum": 1,
+                            "maximum": 1000
                           },
-                          "inProfitOnly": {
+                          "volume": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 10000
+                          },
+                          "sl": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "mode": {
+                                    "type": "string",
+                                    "const": "points"
+                                  },
+                                  "points": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 1000000
+                                  }
+                                },
+                                "required": ["mode", "points"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "mode": {
+                                    "type": "string",
+                                    "const": "price"
+                                  },
+                                  "price": {
+                                    "type": "number",
+                                    "exclusiveMinimum": 0
+                                  }
+                                },
+                                "required": ["mode", "price"],
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          "tp": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "mode": {
+                                    "type": "string",
+                                    "const": "points"
+                                  },
+                                  "points": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 1000000
+                                  }
+                                },
+                                "required": ["mode", "points"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "mode": {
+                                    "type": "string",
+                                    "const": "price"
+                                  },
+                                  "price": {
+                                    "type": "number",
+                                    "exclusiveMinimum": 0
+                                  }
+                                },
+                                "required": ["mode", "price"],
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          "noStop": {
                             "type": "boolean"
                           }
                         },
-                        "required": ["symbol", "side"],
+                        "required": ["action", "symbol", "side", "count", "volume"],
                         "additionalProperties": false
                       },
-                      "price": {
-                        "type": "number",
-                        "exclusiveMinimum": 0
-                      }
-                    },
-                    "required": ["action", "filter", "price"],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "action": {
-                        "type": "string",
-                        "const": "breakeven"
-                      },
-                      "filter": {
+                      {
                         "type": "object",
                         "properties": {
+                          "action": {
+                            "type": "string",
+                            "const": "ladder"
+                          },
                           "symbol": {
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 32,
                             "pattern": "^[A-Za-z0-9._#-]+$"
                           },
-                          "side": {
+                          "type": {
                             "type": "string",
-                            "enum": ["ALL", "BUY", "SELL"]
+                            "enum": ["BUY_LIMIT", "BUY_STOP", "SELL_LIMIT", "SELL_STOP"]
                           },
-                          "magic": {
+                          "from": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          "to": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          "spacing": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "levels"
+                                  },
+                                  "levels": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 1000
+                                  }
+                                },
+                                "required": ["kind", "levels"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "step"
+                                  },
+                                  "stepPoints": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 1000000
+                                  }
+                                },
+                                "required": ["kind", "stepPoints"],
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          "lots": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "flat"
+                                  },
+                                  "volume": {
+                                    "type": "number",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 10000
+                                  }
+                                },
+                                "required": ["kind", "volume"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "scaled"
+                                  },
+                                  "start": {
+                                    "type": "number",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 10000
+                                  },
+                                  "end": {
+                                    "type": "number",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 10000
+                                  }
+                                },
+                                "required": ["kind", "start", "end"],
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          "slPoints": {
                             "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
+                            "minimum": 1,
+                            "maximum": 1000000
                           },
-                          "inProfitOnly": {
+                          "tpPoints": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1000000
+                          },
+                          "noStop": {
                             "type": "boolean"
+                          },
+                          "expiry": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "DAY"
+                                  }
+                                },
+                                "required": ["type"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "GTC"
+                                  }
+                                },
+                                "required": ["type"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "SPECIFIED"
+                                  },
+                                  "time": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  }
+                                },
+                                "required": ["type", "time"],
+                                "additionalProperties": false
+                              }
+                            ]
                           }
                         },
-                        "required": ["symbol", "side"],
+                        "required": ["action", "symbol", "type", "from", "to", "spacing", "lots", "expiry"],
                         "additionalProperties": false
-                      },
-                      "offsetPoints": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1000000
                       }
-                    },
-                    "required": ["action", "filter", "offsetPoints"],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "action": {
-                        "type": "string",
-                        "const": "lock"
-                      },
-                      "filter": {
-                        "type": "object",
-                        "properties": {
-                          "symbol": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 32,
-                            "pattern": "^[A-Za-z0-9._#-]+$"
-                          },
-                          "side": {
-                            "type": "string",
-                            "enum": ["ALL", "BUY", "SELL"]
-                          },
-                          "magic": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "inProfitOnly": {
-                            "type": "boolean"
-                          }
-                        },
-                        "required": ["symbol", "side"],
-                        "additionalProperties": false
-                      },
-                      "distancePoints": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 1000000
-                      }
-                    },
-                    "required": ["action", "filter", "distancePoints"],
-                    "additionalProperties": false
+                    ]
                   }
                 ]
               }
@@ -1043,7 +1316,7 @@
                     },
                     "action": {
                       "type": "string",
-                      "enum": ["levels", "closeAt", "close", "breakeven", "lock"]
+                      "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
                     },
                     "symbol": {
                       "type": "string"
@@ -1129,6 +1402,12 @@
                         },
                         "totalLots": {
                           "type": "number"
+                        },
+                        "prices": {
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          }
                         }
                       },
                       "required": ["buys", "sells"],
@@ -1143,6 +1422,95 @@
                     "mode": {
                       "type": "string",
                       "enum": ["mock", "demo", "live"]
+                    },
+                    "entry": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": ["market", "ladder"]
+                        },
+                        "side": {
+                          "type": "string",
+                          "enum": ["BUY", "SELL"]
+                        },
+                        "totalLots": {
+                          "type": "number"
+                        },
+                        "risk": {
+                          "type": "object",
+                          "properties": {
+                            "total": {
+                              "type": ["number", "null"]
+                            },
+                            "unlimited": {
+                              "type": "boolean"
+                            },
+                            "pctOfEquity": {
+                              "type": ["number", "null"]
+                            }
+                          },
+                          "required": ["total", "unlimited", "pctOfEquity"],
+                          "additionalProperties": false
+                        },
+                        "margin": {
+                          "type": "object",
+                          "properties": {
+                            "required": {
+                              "type": "number"
+                            },
+                            "freeMargin": {
+                              "type": "number"
+                            }
+                          },
+                          "required": ["required", "freeMargin"],
+                          "additionalProperties": false
+                        },
+                        "spread": {
+                          "type": "object",
+                          "properties": {
+                            "nowPoints": {
+                              "type": "number"
+                            },
+                            "normalPoints": {
+                              "type": ["number", "null"]
+                            }
+                          },
+                          "required": ["nowPoints", "normalPoints"],
+                          "additionalProperties": false
+                        },
+                        "expiry": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": ["DAY", "GTC", "SPECIFIED"]
+                            },
+                            "time": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["type"],
+                          "additionalProperties": false
+                        },
+                        "requestedLevels": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "duplicatesRemoved": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "batchSeq": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["kind", "side", "totalLots", "risk", "margin", "spread"],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -1654,7 +2022,7 @@
                     },
                     "action": {
                       "type": "string",
-                      "enum": ["levels", "closeAt", "close", "breakeven", "lock"]
+                      "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
                     },
                     "symbol": {
                       "type": "string"
@@ -1740,6 +2108,12 @@
                         },
                         "totalLots": {
                           "type": "number"
+                        },
+                        "prices": {
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          }
                         }
                       },
                       "required": ["buys", "sells"],
@@ -1754,6 +2128,95 @@
                     "mode": {
                       "type": "string",
                       "enum": ["mock", "demo", "live"]
+                    },
+                    "entry": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": ["market", "ladder"]
+                        },
+                        "side": {
+                          "type": "string",
+                          "enum": ["BUY", "SELL"]
+                        },
+                        "totalLots": {
+                          "type": "number"
+                        },
+                        "risk": {
+                          "type": "object",
+                          "properties": {
+                            "total": {
+                              "type": ["number", "null"]
+                            },
+                            "unlimited": {
+                              "type": "boolean"
+                            },
+                            "pctOfEquity": {
+                              "type": ["number", "null"]
+                            }
+                          },
+                          "required": ["total", "unlimited", "pctOfEquity"],
+                          "additionalProperties": false
+                        },
+                        "margin": {
+                          "type": "object",
+                          "properties": {
+                            "required": {
+                              "type": "number"
+                            },
+                            "freeMargin": {
+                              "type": "number"
+                            }
+                          },
+                          "required": ["required", "freeMargin"],
+                          "additionalProperties": false
+                        },
+                        "spread": {
+                          "type": "object",
+                          "properties": {
+                            "nowPoints": {
+                              "type": "number"
+                            },
+                            "normalPoints": {
+                              "type": ["number", "null"]
+                            }
+                          },
+                          "required": ["nowPoints", "normalPoints"],
+                          "additionalProperties": false
+                        },
+                        "expiry": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": ["DAY", "GTC", "SPECIFIED"]
+                            },
+                            "time": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["type"],
+                          "additionalProperties": false
+                        },
+                        "requestedLevels": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "duplicatesRemoved": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "batchSeq": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["kind", "side", "totalLots", "risk", "margin", "spread"],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -1923,7 +2386,7 @@
                             },
                             "action": {
                               "type": "string",
-                              "enum": ["levels", "closeAt", "close", "breakeven", "lock"]
+                              "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
                             },
                             "symbol": {
                               "type": "string"
@@ -2009,6 +2472,12 @@
                                 },
                                 "totalLots": {
                                   "type": "number"
+                                },
+                                "prices": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "number"
+                                  }
                                 }
                               },
                               "required": ["buys", "sells"],
@@ -2023,6 +2492,95 @@
                             "mode": {
                               "type": "string",
                               "enum": ["mock", "demo", "live"]
+                            },
+                            "entry": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": ["market", "ladder"]
+                                },
+                                "side": {
+                                  "type": "string",
+                                  "enum": ["BUY", "SELL"]
+                                },
+                                "totalLots": {
+                                  "type": "number"
+                                },
+                                "risk": {
+                                  "type": "object",
+                                  "properties": {
+                                    "total": {
+                                      "type": ["number", "null"]
+                                    },
+                                    "unlimited": {
+                                      "type": "boolean"
+                                    },
+                                    "pctOfEquity": {
+                                      "type": ["number", "null"]
+                                    }
+                                  },
+                                  "required": ["total", "unlimited", "pctOfEquity"],
+                                  "additionalProperties": false
+                                },
+                                "margin": {
+                                  "type": "object",
+                                  "properties": {
+                                    "required": {
+                                      "type": "number"
+                                    },
+                                    "freeMargin": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": ["required", "freeMargin"],
+                                  "additionalProperties": false
+                                },
+                                "spread": {
+                                  "type": "object",
+                                  "properties": {
+                                    "nowPoints": {
+                                      "type": "number"
+                                    },
+                                    "normalPoints": {
+                                      "type": ["number", "null"]
+                                    }
+                                  },
+                                  "required": ["nowPoints", "normalPoints"],
+                                  "additionalProperties": false
+                                },
+                                "expiry": {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": ["DAY", "GTC", "SPECIFIED"]
+                                    },
+                                    "time": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["type"],
+                                  "additionalProperties": false
+                                },
+                                "requestedLevels": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "duplicatesRemoved": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "batchSeq": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": ["kind", "side", "totalLots", "risk", "margin", "spread"],
+                              "additionalProperties": false
                             }
                           },
                           "required": [

@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { closeNowBody } from "@/server/trading/manage";
+import { entryBody } from "@/server/trading/entryPlans";
 import { planBody } from "@/server/trading/plans";
 import { killBody, liveBody } from "./adminRoutes";
 import { codeBody, loginBody } from "./authRoutes";
@@ -22,7 +23,7 @@ const skipped = z.strictObject({ id: z.string(), reason: z.string() });
 
 export const planSummary = z.strictObject({
   id: z.uuid(),
-  action: z.enum(["levels", "closeAt", "close", "breakeven", "lock"]),
+  action: z.enum(["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]),
   symbol: z.string(),
   expiresAt: z.iso.datetime(),
   quote: z.strictObject({ bid: z.number(), ask: z.number(), time: z.iso.datetime() }).nullable(),
@@ -35,9 +36,31 @@ export const planSummary = z.strictObject({
     asTP: z.number().int().optional(),
     cancels: z.number().int().optional(),
     totalLots: z.number().optional(),
+    prices: z.array(z.number()).optional(),
   }),
   warnings: z.array(z.string()),
   mode: z.enum(["mock", "demo", "live"]),
+  /** Market batches and ladders: risk, margin, spread, expiry and the batch number. */
+  entry: z
+    .strictObject({
+      kind: z.enum(["market", "ladder"]),
+      side: z.enum(["BUY", "SELL"]),
+      totalLots: z.number(),
+      risk: z.strictObject({
+        total: z.number().nullable(),
+        unlimited: z.boolean(),
+        pctOfEquity: z.number().nullable(),
+      }),
+      margin: z.strictObject({ required: z.number(), freeMargin: z.number() }),
+      spread: z.strictObject({ nowPoints: z.number(), normalPoints: z.number().nullable() }),
+      expiry: z
+        .strictObject({ type: z.enum(["DAY", "GTC", "SPECIFIED"]), time: z.string().optional() })
+        .optional(),
+      requestedLevels: z.number().int().optional(),
+      duplicatesRemoved: z.number().int().optional(),
+      batchSeq: z.number().int().optional(),
+    })
+    .optional(),
 });
 
 export const planViolation = z.strictObject({
@@ -225,7 +248,7 @@ export const OPERATIONS: readonly Op[] = [
     method: "post",
     path: "/api/plans",
     summary: "Dry run: build and store a plan for 30 s",
-    body: planBody,
+    body: z.union([planBody, entryBody]),
     ok: { status: 201, schema: planSummary },
     errors: [...AUTHED, "VALIDATION", "PLAN_INVALID", "PRICE_STALE", "BROKER_UNAVAILABLE"],
   },

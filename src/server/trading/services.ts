@@ -20,6 +20,19 @@ import { getDb } from "../context";
 import type { Db } from "../db/sql";
 import { DbExecutionStore, recoverInterrupted } from "./executions";
 import { SpecCache } from "./specCache";
+import { SpreadSampler } from "./spread";
+import type { EntryCaps } from "@/domain/entries";
+import { DEFAULT_SPREAD, type SpreadConfig } from "@/domain/spreadGuard";
+
+/** Order Desk settings (docs/03 §5, §9), read once from the env. */
+export interface EntryConfig {
+  readonly caps: EntryCaps;
+  readonly commissionPerLot: number;
+  /** R9.1: APP_MAGIC_PREFIX. */
+  readonly magicPrefix: number;
+  readonly spread: SpreadConfig;
+  readonly sampler: SpreadSampler;
+}
 
 export interface TradingServices {
   readonly broker: BrokerProvider;
@@ -28,6 +41,7 @@ export interface TradingServices {
   readonly envHalted: boolean;
   readonly clock: Clock;
   readonly runner: JobRunner;
+  readonly entry: EntryConfig;
   /** Most positions one preview may touch (MAX_POSITIONS_PER_BATCH). Close-now is exempt. */
   readonly maxPerBatch: number;
   /** The MetaApi account id (the accounts row whose live_enabled counts). null in mock mode. */
@@ -174,6 +188,26 @@ const KEY = "__orderDeskTrading";
 const g = globalThis as typeof globalThis & { [KEY]?: Shared };
 const shared: Shared = (g[KEY] ??= {});
 
+export function entryConfig(env: Env): EntryConfig {
+  return {
+    caps: {
+      maxOrders: env.MAX_ORDERS_PER_ACTION,
+      maxTotalLots: env.MAX_TOTAL_LOTS,
+      maxRiskPct: env.MAX_RISK_PCT_PER_ACTION,
+    },
+    commissionPerLot: env.COMMISSION_PER_LOT,
+    magicPrefix: env.APP_MAGIC_PREFIX,
+    spread: {
+      ...DEFAULT_SPREAD,
+      k: env.SPREAD_GUARD_K,
+      minSlackPoints: env.SPREAD_MIN_SLACK_POINTS,
+      floorPoints: env.SPREAD_FLOOR_POINTS,
+      absoluteMaxPoints: env.SPREAD_MAX_POINTS ?? null,
+    },
+    sampler: new SpreadSampler(env.SPREAD_WINDOW_SEC),
+  };
+}
+
 async function create(env: Env, clock: Clock): Promise<TradingServices> {
   const broker: BrokerProvider =
     env.TRADING_MODE === "mock"
@@ -198,6 +232,7 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
     clock,
     runner,
     maxPerBatch: env.MAX_POSITIONS_PER_BATCH,
+    entry: entryConfig(env),
     accountRef: env.TRADING_MODE === "mock" ? null : (env.METAAPI_ACCOUNT_ID ?? null),
   };
 }

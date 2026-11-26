@@ -3,7 +3,8 @@ import { z } from "zod";
 import { BrokerError } from "@/broker/BrokerProvider";
 import { killSwitchState } from "@/server/killSwitch";
 import { AccountModeError, type TradingServices } from "@/server/trading/services";
-import { createPlan, LATER_ACTIONS, loadPlan, planBody } from "@/server/trading/plans";
+import { createEntryPlan, ENTRY_ACTIONS, entryBody, type EntryBody } from "@/server/trading/entryPlans";
+import { createPlan, LATER_ACTIONS, loadPlan, planBody, type PlanBody } from "@/server/trading/plans";
 import {
   outcomeOf,
   progressView,
@@ -124,7 +125,8 @@ export function makeTradingRoutes(
       if (LATER_ACTIONS.has(raw.value.action)) {
         return fail("VALIDATION", `"${raw.value.action}" arrives with the Order Desk. Not available yet.`);
       }
-      const body = planBody.safeParse(raw.value);
+      const isEntry = ENTRY_ACTIONS.has(raw.value.action);
+      const body = isEntry ? entryBody.safeParse(raw.value) : planBody.safeParse(raw.value);
       if (!body.success) {
         const first = body.error.issues[0];
         return fail(
@@ -135,7 +137,7 @@ export function makeTradingRoutes(
         );
       }
       return withBroker(services, async (svc) => {
-        const r = await createPlan(svc, deps.db, session.userId, body.data, (t, summary) =>
+        const record = (t: Db, summary: PlanSummary) =>
           audit(
             t,
             auditKey(deps.sessionSecret),
@@ -143,11 +145,24 @@ export function makeTradingRoutes(
               actor: "owner",
               action: "plan.created",
               subject: summary.id,
-              details: { action: summary.action, symbol: summary.symbol, count: summary.count },
+              details: {
+                action: summary.action,
+                symbol: summary.symbol,
+                count: summary.count,
+                ...(summary.entry === undefined
+                  ? {}
+                  : {
+                      batchSeq: summary.entry.batchSeq ?? null,
+                      totalLots: summary.entry.totalLots,
+                      risk: summary.entry.risk.total,
+                    }),
+              },
             },
             new Date(svc.clock.now()),
-          ),
-        );
+          );
+        const r = isEntry
+          ? await createEntryPlan(svc, deps.db, session.userId, body.data as EntryBody, record)
+          : await createPlan(svc, deps.db, session.userId, body.data as PlanBody, record);
         if (r.ok) return ok(r.summary, 201);
         const e = r.error;
         switch (e.code) {
@@ -433,6 +448,7 @@ export function makeTradingRoutes(
             case "NOT_FOUND":
               return fail("NOT_FOUND", r.message);
             case "STILL_RUNNING":
+            case "NOT_FOR_ENTRIES":
               return fail("VALIDATION", r.message);
             case "NOTHING_TO_RETRY":
               return fail("PLAN_INVALID", r.message, { details: [] });
