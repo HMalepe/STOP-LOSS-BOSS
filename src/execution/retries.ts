@@ -12,6 +12,7 @@ import type { BrokerProvider, TradeResult } from "@/broker/BrokerProvider";
 import { LOCAL_CODE, RETCODE, type BrokerOp } from "@/broker/retcodes";
 import { send } from "./executor";
 import type { CreditLimiter, Priority } from "./rateLimiter";
+import { verifyEntryStop } from "./stopCheck";
 import type { Scheduler } from "./scheduler";
 import { targetOf, type ExecItem, type ItemResult, type Outcome } from "./types";
 
@@ -222,7 +223,13 @@ export async function runItem(index: number, item: ExecItem, ctx: RunContext): P
     safely(() => ctx.onCall?.({ index, op: item.op, targetId, attempt: attempts, result: r }));
 
     const next = await decide(item, r, attempts, ctx);
-    if (next.kind === "end") return end(next.outcome, next.message, next.result ?? r, next.extra);
+    if (next.kind === "end") {
+      const finished = end(next.outcome, next.message, next.result ?? r, next.extra);
+      // R5.3b: an entry is "done" only once its stop is verified (repaired, or the entry reverted).
+      return finished.outcome === "done" && (item.op === "market" || item.op === "pending")
+        ? verifyEntryStop(item, finished, ctx)
+        : finished;
+    }
     if (next.result?.retryAfterMs !== undefined) {
       pause = Math.max(pause, ctx.limiter.pauseFor(next.result.retryAfterMs));
     }

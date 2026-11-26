@@ -737,8 +737,11 @@ describe("ADR-0009: entries with an unknown outcome are never doubled", () => {
       stringCode: "TRADE_RETCODE_DONE_PARTIAL",
       positionId: "1",
     });
-    expect((await collect([market("c17")], deps, s)).results[0]?.message).toBe(
-      "partially filled (R6.7), volume unknown: check",
+    // R5.3b: the book can't be read, so the stop can't be verified either: never a clean "done".
+    const r = (await collect([market("c17")], deps, s)).results[0];
+    expect(r?.outcome).toBe("unknown");
+    expect(r?.message).toMatch(
+      /^partially filled \(R6\.7\), volume unknown: check; but its stop couldn't be verified \(down\)/,
     );
   });
 
