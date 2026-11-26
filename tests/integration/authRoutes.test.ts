@@ -231,7 +231,7 @@ describe("context wiring", () => {
     const ctx = await import("@/server/context");
     const a = await ctx.getDb();
     expect(await ctx.getDb()).toBe(a);
-    expect(await a.query("select count(*)::int as n from schema_migrations")).toEqual([{ n: 4 }]);
+    expect(await a.query("select count(*)::int as n from schema_migrations")).toEqual([{ n: 5 }]);
     const d = await ctx.getAuthDeps();
     expect(d.sessionSecret).toBe(SECRET);
     await a.close();

@@ -25,17 +25,17 @@ import { SpreadSampler } from "./spread";
 import type { TradingServices } from "./services";
 import { randomUUID } from "node:crypto";
 
-const SYMBOL = z
+export const SYMBOL = z
   .string()
   .trim()
   .min(1)
   .max(32)
   .regex(/^[A-Za-z0-9._#-]+$/, "not a symbol name");
-const POINTS = z.number().int().min(1).max(1_000_000);
-const PRICE = z.number().positive();
-const LOT = z.number().positive().max(10_000);
+export const POINTS = z.number().int().min(1).max(1_000_000);
+export const PRICE = z.number().positive();
+export const LOT = z.number().positive().max(10_000);
 
-const levelSpec = z.union([
+export const levelSpec = z.union([
   z.strictObject({ mode: z.literal("points"), points: POINTS }),
   z.strictObject({ mode: z.literal("price"), price: PRICE }),
 ]);
@@ -51,29 +51,34 @@ const marketBody = z.strictObject({
   noStop: z.boolean().optional(),
 });
 
+export const ladderType = z.enum(["BUY_LIMIT", "BUY_STOP", "SELL_LIMIT", "SELL_STOP"]);
+export const spacingSpec = z.union([
+  z.strictObject({ kind: z.literal("levels"), levels: z.number().int().min(1).max(1_000) }),
+  z.strictObject({ kind: z.literal("step"), stepPoints: POINTS }),
+]);
+export const lotsSpec = z.union([
+  z.strictObject({ kind: z.literal("flat"), volume: LOT }),
+  z.strictObject({ kind: z.literal("scaled"), start: LOT, end: LOT }),
+]);
+/** R9.12: always explicit. GTC is an opt-in, flagged in the preview. */
+export const expirySpec = z.union([
+  z.strictObject({ type: z.literal("DAY") }),
+  z.strictObject({ type: z.literal("GTC") }),
+  z.strictObject({ type: z.literal("SPECIFIED"), time: z.iso.datetime() }),
+]);
+
 const ladderBody = z.strictObject({
   action: z.literal("ladder"),
   symbol: SYMBOL,
-  type: z.enum(["BUY_LIMIT", "BUY_STOP", "SELL_LIMIT", "SELL_STOP"]),
+  type: ladderType,
   from: PRICE,
   to: PRICE,
-  spacing: z.union([
-    z.strictObject({ kind: z.literal("levels"), levels: z.number().int().min(1).max(1_000) }),
-    z.strictObject({ kind: z.literal("step"), stepPoints: POINTS }),
-  ]),
-  lots: z.union([
-    z.strictObject({ kind: z.literal("flat"), volume: LOT }),
-    z.strictObject({ kind: z.literal("scaled"), start: LOT, end: LOT }),
-  ]),
+  spacing: spacingSpec,
+  lots: lotsSpec,
   slPoints: POINTS.optional(),
   tpPoints: POINTS.optional(),
   noStop: z.boolean().optional(),
-  /** R9.12: always explicit. GTC is an opt-in, flagged in the preview. */
-  expiry: z.union([
-    z.strictObject({ type: z.literal("DAY") }),
-    z.strictObject({ type: z.literal("GTC") }),
-    z.strictObject({ type: z.literal("SPECIFIED"), time: z.iso.datetime() }),
-  ]),
+  expiry: expirySpec,
 });
 
 export const entryBody = z.discriminatedUnion("action", [marketBody, ladderBody]);

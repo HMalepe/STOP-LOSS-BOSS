@@ -4,6 +4,7 @@
  * Close-now keeps its own generous budget: the panic button must still work when everything else is throttled.
  */
 import type { Clock } from "@/domain/clock";
+import { fail } from "./respond";
 
 export const BUDGETS = {
   read: { max: 30, windowMs: 5_000 },
@@ -44,4 +45,22 @@ export class SessionLimiter {
     }
     return 0;
   }
+}
+
+/** The per-session throttle as a function, so every route factory shares ONE limiter (one budget per session, not one per file). */
+export function makeThrottle(limiter?: SessionLimiter) {
+  let lim = limiter;
+  return (
+    deps: { readonly clock: Clock },
+    session: { readonly idHash: string },
+    budget: Budget,
+  ): Response | null => {
+    lim ??= new SessionLimiter(deps.clock);
+    const wait = lim.take(session.idHash, budget);
+    return wait === 0
+      ? null
+      : fail("RATE_LIMITED", "Slow down a moment.", {
+          headers: { "Retry-After": String(Math.ceil(wait / 1000)) },
+        });
+  };
 }

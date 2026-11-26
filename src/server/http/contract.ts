@@ -7,6 +7,7 @@ import { z } from "zod";
 import { closeNowBody } from "@/server/trading/manage";
 import { entryBody } from "@/server/trading/entryPlans";
 import { planBody } from "@/server/trading/plans";
+import { presetCreate, presetFire, presetUpdate, recipe } from "@/server/trading/presets";
 import { killBody, liveBody } from "./adminRoutes";
 import { codeBody, loginBody } from "./authRoutes";
 import { ERROR_CODES, statusOf } from "./respond";
@@ -62,6 +63,18 @@ export const planSummary = z.strictObject({
     })
     .optional(),
 });
+
+export const presetRow = z.strictObject({
+  id: z.uuid(),
+  name: z.string(),
+  recipe,
+  pinned: z.boolean(),
+  sort: z.number().int(),
+  /** Holds an absolute price: shown as such (it can go stale in a way offsets can't). */
+  absolute: z.boolean(),
+  updatedAt: z.iso.datetime(),
+});
+export const presetList = z.strictObject({ items: z.array(presetRow) });
 
 export const planViolation = z.strictObject({
   rule: z.string(),
@@ -173,7 +186,7 @@ type Schema = z.ZodType;
 const json = (s: Schema, io: "input" | "output") => z.toJSONSchema(s, { io, unrepresentable: "any" });
 
 interface Op {
-  readonly method: "get" | "post";
+  readonly method: "get" | "post" | "put" | "delete";
   readonly path: string;
   readonly summary: string;
   readonly body?: Schema;
@@ -307,6 +320,53 @@ export const OPERATIONS: readonly Op[] = [
     body: closeNowBody,
     ok: { status: 202, schema: closeNowAccepted },
     errors: [...AUTHED, "VALIDATION", "PLAN_INVALID", "ACCOUNT_MODE_MISMATCH", "BROKER_UNAVAILABLE"],
+  },
+  {
+    method: "get",
+    path: "/api/presets",
+    summary: "Saved recipes, pinned first",
+    ok: { status: 200, schema: presetList },
+    errors: [...AUTHED, "RATE_LIMITED"],
+  },
+  {
+    method: "post",
+    path: "/api/presets",
+    summary: "Save a recipe (market batch or ladder). Offsets, never stale prices",
+    body: presetCreate,
+    ok: { status: 201, schema: presetRow },
+    errors: [...AUTHED, "VALIDATION", "RATE_LIMITED"],
+  },
+  {
+    method: "put",
+    path: "/api/presets/{id}",
+    summary: "Rename, edit the recipe, pin or reorder",
+    body: presetUpdate,
+    ok: { status: 200, schema: presetRow },
+    errors: [...AUTHED, "VALIDATION", "NOT_FOUND", "RATE_LIMITED"],
+  },
+  {
+    method: "delete",
+    path: "/api/presets/{id}",
+    summary: "Delete a preset",
+    ok: { status: 200 },
+    errors: [...AUTHED, "NOT_FOUND", "RATE_LIMITED"],
+  },
+  {
+    method: "post",
+    path: "/api/presets/{id}/fire",
+    summary:
+      "Build a fresh plan from the LIVE quote (R9.6). Preview, confirm and execute follow as usual. `side` flips a market preset",
+    body: presetFire,
+    ok: { status: 201, schema: planSummary },
+    errors: [
+      ...AUTHED,
+      "VALIDATION",
+      "NOT_FOUND",
+      "PLAN_INVALID",
+      "PRICE_STALE",
+      "BROKER_UNAVAILABLE",
+      "RATE_LIMITED",
+    ],
   },
   {
     method: "get",

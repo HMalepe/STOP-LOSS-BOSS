@@ -5,6 +5,9 @@ import { getLogger } from "@/server/logger";
 import { makeAdminRoutes } from "./adminRoutes";
 import { makeAuthRoutes } from "./authRoutes";
 import { makeGuard } from "./guard";
+import { makePresetRoutes } from "./presetRoutes";
+import { SessionLimiter } from "./sessionLimiter";
+import { systemClock } from "@/server/clock";
 import { makeTradingRoutes } from "./tradingRoutes";
 import { getTradingServices, startedTradingServices } from "@/server/trading/services";
 
@@ -33,4 +36,7 @@ export const adminRoutes = makeAdminRoutes(
   },
 );
 
-export const tradingRoutes = makeTradingRoutes(guard, getTradingServices);
+/** One request budget per session, shared by every trading route. */
+const limiter = new SessionLimiter(systemClock);
+export const tradingRoutes = makeTradingRoutes(guard, getTradingServices, limiter);
+export const presetRoutes = makePresetRoutes(guard, getTradingServices, limiter);

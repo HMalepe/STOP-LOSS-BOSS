@@ -22,6 +22,7 @@ import { loadState, pagePositions } from "@/server/trading/state";
 import { auditKey, audit } from "@/server/audit/audit";
 import type { Db } from "@/server/db/sql";
 import type { makeGuard } from "./guard";
+import { planErrorResponse } from "./planErrors";
 import { fail, ok } from "./respond";
 import { parseJson } from "./request";
 
@@ -70,8 +71,6 @@ export async function withBroker(
     throw e;
   }
 }
-
-const PLAN_INVALID_EMPTY = "Nothing to do: no open positions match.";
 
 export function makeTradingRoutes(
   guard: ReturnType<typeof makeGuard>,
@@ -164,19 +163,7 @@ export function makeTradingRoutes(
           ? await createEntryPlan(svc, deps.db, session.userId, body.data as EntryBody, record)
           : await createPlan(svc, deps.db, session.userId, body.data as PlanBody, record);
         if (r.ok) return ok(r.summary, 201);
-        const e = r.error;
-        switch (e.code) {
-          case "VALIDATION":
-            return fail("VALIDATION", e.message);
-          case "PRICE_STALE":
-            return fail("PRICE_STALE", e.message);
-          case "BROKER_UNAVAILABLE":
-            return fail("BROKER_UNAVAILABLE", e.message, { details: e.details });
-          case "NO_MATCH":
-            return fail("PLAN_INVALID", PLAN_INVALID_EMPTY, { details: [] });
-          case "PLAN_INVALID":
-            return fail("PLAN_INVALID", e.message, { details: e.details });
-        }
+        return planErrorResponse(r.error);
       });
     }),
 
