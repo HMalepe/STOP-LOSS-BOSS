@@ -406,6 +406,7 @@ describe("faults, connection, recorder, account", () => {
       bid: 1.087,
       ask: 1.0871,
       time: clock.now(),
+      lossTickValue: 1, // R9.2: the mock's symbol tickValue, on the quote like the real price feed
     });
     expect(await b.getSymbolSpec("EURUSD")).toEqual(SPEC);
     b.seedPosition({
@@ -504,5 +505,18 @@ describe("MT5 fidelity fixes (trading-systems review)", () => {
     expect(r.get("cX")).toEqual({ status: "notFound" });
     b.setInFlight("cF", false);
     expect((await b.reconcile(["cF"])).get("cF")).toEqual({ status: "notFound" });
+  });
+});
+
+describe("R9.3 calculateMargin (mock model)", () => {
+  it("volume × contract × price ÷ leverage; grows with volume; unknown symbol and disconnect throw like any read", async () => {
+    const { b } = broker();
+    const one = await b.calculateMargin({ symbol: "EURUSD", side: "BUY", volume: 0.1, price: 1.087 });
+    const ten = await b.calculateMargin({ symbol: "EURUSD", side: "SELL", volume: 1, price: 1.087 });
+    expect(one).toBeGreaterThan(0);
+    expect(ten).toBeCloseTo((one ?? 0) * 10, 8);
+    await expect(b.calculateMargin({ symbol: "NOPE", side: "BUY", volume: 1, price: 1 })).rejects.toThrow();
+    b.setConnected(false);
+    await expect(b.calculateMargin({ symbol: "EURUSD", side: "BUY", volume: 1, price: 1 })).rejects.toThrow();
   });
 });

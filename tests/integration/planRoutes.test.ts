@@ -107,6 +107,7 @@ describe("POST /api/plans", () => {
       getOrders: () => b.getOrders(),
       getQuote: async (x) => ({ ...(await b.getQuote(x)), time: s.clock.now() - 3_001 }),
       getSymbolSpec: (x) => b.getSymbolSpec(x),
+      calculateMargin: (r) => b.calculateMargin(r),
       modifyPosition: (id, l) => b.modifyPosition(id, l),
       closePosition: (id) => b.closePosition(id),
       placeMarket: (r) => b.placeMarket(r),

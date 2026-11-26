@@ -77,6 +77,14 @@ export interface PendingOrderReq extends Levels, EntryTag {
   readonly openPrice: number;
 }
 
+/** R9.3: what to ask the broker's margin calculator. BUY or SELL only (a pending is priced as a market order at its own price). */
+export interface MarginReq {
+  readonly symbol: string;
+  readonly side: Side;
+  readonly volume: number;
+  readonly price: number;
+}
+
 export interface BrokerHealth {
   /** Our connection to MetaApi (or the mock) is up. */
   readonly connected: boolean;
@@ -115,6 +123,12 @@ export interface BrokerProvider {
   getOrders(): Promise<PendingOrder[]>;
   getQuote(symbol: string): Promise<Quote>;
   getSymbolSpec(symbol: string): Promise<SymbolSpec>;
+  /**
+   * R9.3: the broker's margin for one hypothetical order, STANDALONE (ignores existing positions). undefined = the broker
+   * couldn't compute it (callers must BLOCK, never estimate). Throws BrokerError when the call itself fails. It is an RPC,
+   * not a zero-credit stream read: callers cap how often they ask.
+   */
+  calculateMargin(req: MarginReq): Promise<number | undefined>;
   modifyPosition(positionId: string, levels: Levels): Promise<TradeResult>;
   closePosition(positionId: string): Promise<TradeResult>;
   placeMarket(req: MarketOrderReq): Promise<TradeResult>;

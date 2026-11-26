@@ -16,6 +16,7 @@ import {
   type BrokerProvider,
   type Levels,
   type MarginMode,
+  type MarginReq,
   type MarketOrderReq,
   type PendingOrderReq,
   type Reconciled,
@@ -270,8 +271,15 @@ export class MockBroker implements BrokerProvider {
   getQuote(symbol: string): Promise<Quote> {
     return this.#read(() => {
       const s = this.#symbol(symbol);
-      return { symbol, bid: s.bid, ask: s.ask, time: this.#opts.clock.now() };
+      return { symbol, bid: s.bid, ask: s.ask, time: this.#opts.clock.now(), lossTickValue: s.tickValue };
     });
+  }
+
+  calculateMargin(req: MarginReq): Promise<number | undefined> {
+    // The mock's own margin model (same as a fill's): volume × contract × price ÷ leverage. Standalone, like the real call.
+    return this.#read(
+      () => (req.volume * this.#symbol(req.symbol).contractSize * req.price) / this.#leverage(),
+    );
   }
 
   getSymbolSpec(symbol: string): Promise<SymbolSpec> {

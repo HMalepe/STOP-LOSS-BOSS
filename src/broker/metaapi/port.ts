@@ -24,6 +24,13 @@ export interface MetaApiConnectionPort {
   readonly terminalState: TerminalStatePort;
   readonly synchronized: boolean;
   subscribeToMarketData(symbol: string): Promise<unknown>;
+  /** MarginOrder: { symbol, type: ORDER_TYPE_BUY | ORDER_TYPE_SELL, volume, openPrice } → { margin?: number } */
+  calculateMargin(order: {
+    symbol: string;
+    type: "ORDER_TYPE_BUY" | "ORDER_TYPE_SELL";
+    volume: number;
+    openPrice: number;
+  }): Promise<unknown>;
   modifyPosition(positionId: string, stopLoss: number, takeProfit: number): Promise<unknown>;
   closePosition(positionId: string): Promise<unknown>;
   cancelOrder(orderId: string): Promise<unknown>;

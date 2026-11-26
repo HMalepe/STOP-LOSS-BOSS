@@ -113,6 +113,28 @@ export function brokerContract(
       expect(q.ask).toBeGreaterThanOrEqual(q.bid);
     });
 
+    it("R9.2: the quote carries a usable lossTickValue (the price feed has it, the spec doesn't)", async () => {
+      const t = tgt();
+      const q = await t.broker.getQuote(t.symbol);
+      expect(q.lossTickValue).toBeGreaterThan(0);
+      expect(Number.isFinite(q.lossTickValue)).toBe(true);
+    });
+
+    it("R9.3: calculateMargin returns a positive number that grows with volume (or undefined, never a guess)", async () => {
+      const t = tgt();
+      const q = await t.broker.getQuote(t.symbol);
+      const one = await t.broker.calculateMargin({
+        symbol: t.symbol,
+        side: "BUY",
+        volume: 0.1,
+        price: q.ask,
+      });
+      const ten = await t.broker.calculateMargin({ symbol: t.symbol, side: "BUY", volume: 1, price: q.ask });
+      if (one === undefined || ten === undefined) return; // "can't compute" is a valid answer: callers block
+      expect(one).toBeGreaterThan(0);
+      expect(ten).toBeGreaterThan(one);
+    });
+
     it(
       "full position lifecycle: entry with stop + tag, preserve, no-op, invalid stops, close, close again",
       async () => {

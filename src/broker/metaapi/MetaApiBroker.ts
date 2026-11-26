@@ -11,6 +11,7 @@ import {
   type AccountInfo,
   type BrokerHealth,
   type BrokerProvider,
+  type MarginReq,
   type Levels,
   type MarketOrderReq,
   type PendingOrderReq,
@@ -24,6 +25,7 @@ import {
   metaApiInFlight,
   metaApiOrder,
   metaApiPosition,
+  metaApiMargin,
   metaApiPrice,
   metaApiSpec,
   parseList,
@@ -161,6 +163,37 @@ export class MetaApiBroker implements BrokerProvider {
       }
       return parseOne(metaApiSpec, raw, "spec");
     });
+  }
+
+  async calculateMargin(req: MarginReq): Promise<number | undefined> {
+    this.#assertReady();
+    let raw: unknown;
+    try {
+      raw = await withTimeout(
+        this.#conn.calculateMargin({
+          symbol: req.symbol,
+          type: req.side === "BUY" ? "ORDER_TYPE_BUY" : "ORDER_TYPE_SELL",
+          volume: req.volume,
+          openPrice: req.price,
+        }),
+        this.#readTimeoutMs,
+      );
+    } catch (e) {
+      if (e instanceof AdapterTimeout) {
+        throw new BrokerError(
+          "TIMEOUT",
+          `margin for ${req.symbol} timed out after ${String(this.#readTimeoutMs)} ms`,
+        );
+      }
+      throw new BrokerError(
+        "UNKNOWN",
+        `margin for ${req.symbol} failed: ${e instanceof Error ? e.name : "error"}`,
+      );
+    }
+    // An absent, malformed or non-positive answer is "can't compute": the caller blocks. Never a made-up number.
+    const parsed = metaApiMargin.safeParse(raw);
+    const m = parsed.success ? parsed.data.margin : undefined;
+    return m !== undefined && Number.isFinite(m) && m > 0 ? m : undefined;
   }
 
   async getQuote(symbol: string): Promise<Quote> {

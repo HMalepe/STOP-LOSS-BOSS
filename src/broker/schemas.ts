@@ -145,8 +145,24 @@ export const metaApiSpec = z
   }));
 
 export const metaApiPrice = z
-  .object({ symbol: z.string().min(1), bid: z.number(), ask: z.number(), time })
-  .transform((q): Quote => ({ symbol: q.symbol, bid: q.bid, ask: q.ask, time: q.time }));
+  .object({
+    symbol: z.string().min(1),
+    bid: z.number(),
+    ask: z.number(),
+    time,
+    // R9.2: value of one tick of loss for one lot, in account currency. It's on the PRICE, not the spec.
+    lossTickValue: z.number().optional(),
+  })
+  .transform((q): Quote => ({
+    symbol: q.symbol,
+    bid: q.bid,
+    ask: q.ask,
+    time: q.time,
+    ...(q.lossTickValue === undefined ? {} : { lossTickValue: q.lossTickValue }),
+  }));
+
+/** calculateMargin → { margin?: number }; margin is undefined when the broker can't compute it (R9.3: that BLOCKS). */
+export const metaApiMargin = z.object({ margin: z.number().optional() });
 
 const MARGIN_MODES: Record<string, MarginMode> = {
   ACCOUNT_MARGIN_MODE_RETAIL_HEDGING: "HEDGING",

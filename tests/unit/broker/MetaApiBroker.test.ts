@@ -74,6 +74,7 @@ function fake(over: Partial<{ connected: boolean; connectedToBroker: boolean; sy
     terminalState: ts,
     synchronized: over.synchronized ?? true,
     subscribeToMarketData: vi.fn((): Promise<unknown> => Promise.resolve()),
+    calculateMargin: vi.fn((): Promise<unknown> => Promise.resolve({ margin: 21.7 })),
     modifyPosition: vi.fn((): Promise<unknown> => Promise.resolve(done)),
     closePosition: vi.fn((): Promise<unknown> => Promise.resolve(done)),
     cancelOrder: vi.fn((): Promise<unknown> => Promise.resolve(done)),
@@ -642,6 +643,65 @@ describe("close-now hardening and reconcile (trading-systems review)", () => {
   it("reconcile refuses a stale stream", async () => {
     await expect(new MetaApiBroker(fake({ synchronized: false })).reconcile(["x"])).rejects.toMatchObject({
       kind: "NOT_CONNECTED",
+    });
+  });
+});
+
+describe("R9.2 / R9.3: tick value and margin", () => {
+  it("lossTickValue comes through on the quote (it lives on the price feed); absent stays absent", async () => {
+    const c = fake();
+    c.terminalState.price.mockReturnValueOnce({ ...rawPrice, lossTickValue: 1.02, profitTickValue: 0.98 });
+    const b = await MetaApiBroker.connect(() => Promise.resolve(c));
+    expect((await b.getQuote("EURUSD")).lossTickValue).toBe(1.02);
+    expect("lossTickValue" in (await b.getQuote("EURUSD"))).toBe(false);
+  });
+
+  it("calculateMargin sends BUY/SELL as MarginOrder and returns the broker's number", async () => {
+    const c = fake();
+    const b = await MetaApiBroker.connect(() => Promise.resolve(c));
+    expect(await b.calculateMargin({ symbol: "EURUSD", side: "SELL", volume: 0.5, price: 1.086 })).toBe(21.7);
+    expect(c.calculateMargin).toHaveBeenCalledWith({
+      symbol: "EURUSD",
+      type: "ORDER_TYPE_SELL",
+      volume: 0.5,
+      openPrice: 1.086,
+    });
+    await b.calculateMargin({ symbol: "EURUSD", side: "BUY", volume: 1, price: 1.087 });
+    expect(c.calculateMargin).toHaveBeenLastCalledWith({
+      symbol: "EURUSD",
+      type: "ORDER_TYPE_BUY",
+      volume: 1,
+      openPrice: 1.087,
+    });
+  });
+
+  it("undefined, zero, negative, NaN or junk answers are 'can't compute' (callers block), never a number", async () => {
+    for (const answer of [
+      {},
+      { margin: 0 },
+      { margin: -5 },
+      { margin: NaN },
+      null,
+      "nope",
+      { margin: "12" },
+    ]) {
+      const c = fake();
+      c.calculateMargin.mockResolvedValueOnce(answer);
+      const b = await MetaApiBroker.connect(() => Promise.resolve(c));
+      expect(await b.calculateMargin({ symbol: "EURUSD", side: "BUY", volume: 1, price: 1 })).toBeUndefined();
+    }
+  });
+
+  it("a failed or stuck call throws BrokerError (TIMEOUT / UNKNOWN), never returns a guess", async () => {
+    const c = fake();
+    c.calculateMargin.mockRejectedValueOnce(named("ValidationError"));
+    const b = await MetaApiBroker.connect(() => Promise.resolve(c), { readTimeoutMs: 20 });
+    await expect(b.calculateMargin({ symbol: "X", side: "BUY", volume: 1, price: 1 })).rejects.toMatchObject({
+      kind: "UNKNOWN",
+    });
+    c.calculateMargin.mockImplementationOnce(never);
+    await expect(b.calculateMargin({ symbol: "X", side: "BUY", volume: 1, price: 1 })).rejects.toMatchObject({
+      kind: "TIMEOUT",
     });
   });
 });
