@@ -14,29 +14,19 @@ import { canonical } from "../audit/audit";
 import { sha256 } from "../auth/crypto";
 import type { Db } from "../db/sql";
 import type { TradingMode } from "../env";
+import { filterShape, toFilter } from "./filters";
 import type { TradingServices } from "./services";
 
 export const PLAN_TTL_MS = 30_000;
 /** R7.2 */
 export const MAX_QUOTE_AGE_MS = 3_000;
 
-const SYMBOL = z
-  .string()
-  .trim()
-  .min(1)
-  .max(32)
-  .regex(/^[A-Za-z0-9._#-]+$/, "not a symbol name");
 const PRICE = z.number().positive();
 const POINTS = z.number().int().nonnegative().max(1_000_000);
 
-const filter = z.strictObject({
-  symbol: SYMBOL,
-  side: z.enum(["ALL", "BUY", "SELL"]),
-  magic: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-  inProfitOnly: z.boolean().optional(),
-});
+const filter = filterShape;
 
-/** The actions the preview supports today. Entries (market, ladder) and cancel arrive with the Order Desk (Phase 08). */
+/** Position actions. Market and ladder entries have their own body (entryPlans.ts); "cancel" removes pending orders only. */
 export const planBody = z.discriminatedUnion("action", [
   z.strictObject({
     action: z.literal("levels"),
@@ -47,9 +37,9 @@ export const planBody = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("closeAt"), filter, price: PRICE }),
   z.strictObject({ action: z.literal("breakeven"), filter, offsetPoints: POINTS }),
   z.strictObject({ action: z.literal("lock"), filter, distancePoints: POINTS.min(1) }),
+  z.strictObject({ action: z.literal("cancel"), filter }),
 ]);
 export type PlanBody = z.infer<typeof planBody>;
-export const LATER_ACTIONS = new Set(["cancel"]);
 
 /** What an entry plan adds to its summary (risk, margin, spread, expiry, batch number). */
 export interface EntrySummary {
@@ -95,13 +85,8 @@ export type CreatePlanResult =
     };
 
 /** Strip `undefined` optionals so the domain type (exactOptionalPropertyTypes) is met exactly. */
-function toRequest(body: PlanBody): PlanRequest {
-  const f = {
-    symbol: body.filter.symbol,
-    side: body.filter.side,
-    ...(body.filter.magic === undefined ? {} : { magic: body.filter.magic }),
-    ...(body.filter.inProfitOnly === undefined ? {} : { inProfitOnly: body.filter.inProfitOnly }),
-  };
+function toRequest(body: PlanBody, magicPrefix: number): PlanRequest {
+  const f = toFilter(body.filter, magicPrefix);
   switch (body.action) {
     case "levels":
       return {
@@ -116,6 +101,8 @@ function toRequest(body: PlanBody): PlanRequest {
       return { action: "breakeven", filter: f, offsetPoints: body.offsetPoints };
     case "lock":
       return { action: "lock", filter: f, distancePoints: body.distancePoints };
+    case "cancel":
+      return { action: "cancel", filter: f };
   }
 }
 
@@ -134,16 +121,17 @@ export async function createPlan(
   /** Writes the audit row in the same transaction as the plan. */
   record: (tx: Db, summary: PlanSummary) => Promise<unknown>,
 ): Promise<CreatePlanResult> {
-  const req = toRequest(body);
+  const req = toRequest(body, svc.entry.magicPrefix);
   const symbol = req.filter.symbol;
+  const needsPrice = req.action !== "cancel"; // cancelling a pending order depends on neither the price nor the symbol spec
   const [positions, orders, quote, spec] = await Promise.all([
     svc.broker.getPositions(),
     svc.broker.getOrders(),
-    svc.broker.getQuote(symbol),
-    svc.specs.get(symbol),
+    needsPrice ? svc.broker.getQuote(symbol) : Promise.resolve(null),
+    needsPrice ? svc.specs.get(symbol) : Promise.resolve(null),
   ]);
   const now = svc.clock.now();
-  if (now - quote.time > MAX_QUOTE_AGE_MS) {
+  if (quote !== null && now - quote.time > MAX_QUOTE_AGE_MS) {
     return {
       ok: false,
       error: {

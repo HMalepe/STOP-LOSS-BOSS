@@ -13,24 +13,13 @@ import { buildPlan, type PlanDraft } from "@/domain/plan";
 import { roundToTick } from "@/domain/price";
 import type { PlanItem, PositionFilter, Quote, SymbolSpec } from "@/domain/types";
 import type { Db } from "../db/sql";
+import { filterShape, toFilter } from "./filters";
 import { gates, persistResults, type ExecuteRefusal, type RecordComplete } from "./executions";
 import { isPlanItem, loadPlan, storePlan, type PlanSummary } from "./plans";
 import type { TradingServices } from "./services";
 
-const SYMBOL = z
-  .string()
-  .trim()
-  .min(1)
-  .max(32)
-  .regex(/^[A-Za-z0-9._#-]+$/, "not a symbol name");
-
 export const closeNowBody = z.strictObject({
-  filter: z.strictObject({
-    symbol: SYMBOL,
-    side: z.enum(["ALL", "BUY", "SELL"]),
-    magic: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-    inProfitOnly: z.boolean().optional(),
-  }),
+  filter: filterShape,
   cancelPending: z.boolean().default(false),
   /** A typed confirmation, so a replayed or mis-wired request can't close everything. */
   confirm: z.literal("CLOSE", { error: 'Type "CLOSE" to confirm.' }),
@@ -67,12 +56,7 @@ export async function closeNow(
   const refused = await gates(svc, db, "close");
   if (refused !== null) return { ok: false, ...refused };
 
-  const f: PositionFilter = {
-    symbol: body.filter.symbol,
-    side: body.filter.side,
-    ...(body.filter.magic === undefined ? {} : { magic: body.filter.magic }),
-    ...(body.filter.inProfitOnly === undefined ? {} : { inProfitOnly: body.filter.inProfitOnly }),
-  };
+  const f: PositionFilter = toFilter(body.filter, svc.entry.magicPrefix);
   const [positions, orders, quote, spec] = await Promise.all([
     svc.broker.getPositions(),
     svc.broker.getOrders(),
@@ -97,8 +81,66 @@ export async function closeNow(
   if (!started.ok) return { ok: false, code: "INTERNAL", message: "Couldn't start the close. Try again." };
   urgentFilters.set(started.executionId, key);
   if (urgentFilters.size > 100) urgentFilters.delete(urgentFilters.keys().next().value ?? "");
-  void persistResults(svc.runner, db, started.executionId, complete);
+  void closeAndSweep(svc, db, userId, started.executionId, req, record, complete);
   return { ok: true, executionId: started.executionId, summary };
+}
+
+/** R4.3: at most this many follow-up closes after the first one. */
+export const MAX_SWEEPS = 3;
+const SWEEP_GAP_MS = 300;
+const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Persist the first close, then look at the book again (R4.3). A pending order can fill, or a position can appear, while the first
+ * pass runs, so "closed" is only claimed once a fresh read finds nothing left that matches. At most MAX_SWEEPS more passes; whatever is
+ * still there after that is reported loudly (`sweep.remaining`), never hidden. Never throws: the first close already ran.
+ */
+async function closeAndSweep(
+  svc: TradingServices,
+  db: Db,
+  userId: string,
+  executionId: string,
+  req: { readonly action: "close"; readonly filter: PositionFilter; readonly cancelPending: boolean },
+  record: Record_,
+  complete: RecordComplete,
+): Promise<void> {
+  await persistResults(svc.runner, db, executionId, complete);
+  let passes = 0;
+  let remaining: number | null = null; // null = couldn't read the book to check
+  try {
+    for (;;) {
+      await pause(SWEEP_GAP_MS);
+      const [positions, orders] = await Promise.all([svc.broker.getPositions(), svc.broker.getOrders()]);
+      const built = buildPlan(req, { positions, orders, quote: null, spec: null });
+      if (!built.ok) {
+        remaining = 0;
+        break;
+      }
+      remaining = built.plan.items.length;
+      if (passes >= MAX_SWEEPS) break;
+      passes++;
+      const summary = await storePlan(svc, db, userId, built.plan, req, positions, record);
+      const started = await svc.runner.start(summary.id, built.plan.items, { urgent: true });
+      if (!started.ok) break;
+      await persistResults(svc.runner, db, started.executionId, complete);
+    }
+  } catch {
+    // Fall through with what we know: `remaining` is the last count, or null if we never managed a read.
+  }
+  await db
+    .tx(async (t) => {
+      await t.query(
+        "update executions set summary = coalesce(summary, '{}'::jsonb) || $2::jsonb where id = $1",
+        [executionId, JSON.stringify({ sweep: { passes, remaining, clean: remaining === 0 } })],
+      );
+      await complete(t, {
+        actor: "system",
+        action: "close_now.sweep",
+        subject: executionId,
+        details: { passes, remaining, clean: remaining === 0 },
+      });
+    })
+    .catch(() => undefined);
 }
 
 /** Running close-nows by filter (bounded). */

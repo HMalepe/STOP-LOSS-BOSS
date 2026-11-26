@@ -24,7 +24,7 @@ const skipped = z.strictObject({ id: z.string(), reason: z.string() });
 
 export const planSummary = z.strictObject({
   id: z.uuid(),
-  action: z.enum(["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]),
+  action: z.enum(["levels", "closeAt", "close", "breakeven", "lock", "cancel", "market", "ladder"]),
   symbol: z.string(),
   expiresAt: z.iso.datetime(),
   quote: z.strictObject({ bid: z.number(), ask: z.number(), time: z.iso.datetime() }).nullable(),
@@ -163,6 +163,24 @@ export const positionsPage = z.strictObject({
   nextCursor: z.string().nullable(),
 });
 
+const batchLeg = z.strictObject({
+  count: z.number().int(),
+  buys: z.number().int(),
+  sells: z.number().int(),
+  lots: z.number(),
+});
+export const batchesView = z.strictObject({
+  items: z.array(
+    z.strictObject({
+      batchSeq: z.number().int(),
+      magic: z.number().int(),
+      symbols: z.array(z.string()),
+      positions: batchLeg.extend({ profit: z.number(), withoutStop: z.number().int() }),
+      orders: batchLeg,
+    }),
+  ),
+});
+
 const sideSummary = z.strictObject({ count: z.number().int(), lots: z.number(), profit: z.number() });
 export const stateView = z.object({
   mode: z.enum(["mock", "demo", "live"]),
@@ -256,6 +274,13 @@ export const OPERATIONS: readonly Op[] = [
     query: { symbol: "Filter", side: "ALL | BUY | SELL", cursor: "nextCursor from the previous page" },
     ok: { status: 200, schema: positionsPage },
     errors: [...AUTHED, "VALIDATION", "BROKER_UNAVAILABLE"],
+  },
+  {
+    method: "get",
+    path: "/api/batches",
+    summary: "Batches on the book now (positions and pending orders by batch number), newest first",
+    ok: { status: 200, schema: batchesView },
+    errors: [...AUTHED, "BROKER_UNAVAILABLE"],
   },
   {
     method: "post",

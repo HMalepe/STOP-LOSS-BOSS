@@ -18,7 +18,7 @@
 | 05 | Auth and security | ✅ | 722 tests + 5 e2e. Owner/TOTP/recovery, sessions, HMAC audit chain, kill switch, live gate, CSP. Security review: 3 high, 4 medium, 5 low, all fixed with attack-reproducing regression tests. Deps audit 70 → 3 |
 | 06 | API routes | ✅ | M1 ✅ state + positions · M2 ✅ plans · M3 ✅ execute + SSE · M4 ✅ close-now, retry, history · M5 ✅ contract + OpenAPI. Reviews: 3 high + 4 QA must-fix + 6 medium fixed. 819 tests |
 | 07 | UI | ✅ | "The Observatory" design system (docs/12), controls, sign-in, live desk, History, Settings/kill switch, palette, PWA + offline. 13 e2e + screenshot set (docs/screens/phone). Design review: real issues fixed, 2 were screenshot-timing artifacts |
-| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | M1 ✅ §9 rules, reviewed by trading-systems (8 must-fix folded in) · M2 ✅ domain: bulk market entries, risk, margin, spread guard · M3 ✅ ladders · M4 ✅ entries on the server (plans, execute, R5.3b stop check, R9.10), presets CRUD + fire (R9.6) |
+| 08 | Order Desk (bulk orders, presets, ladders) | 🟨 | M1 ✅ §9 rules, reviewed by trading-systems (8 must-fix folded in) · M2 ✅ domain: bulk market entries, risk, margin, spread guard · M3 ✅ ladders · M4 ✅ entries on the server (plans, execute, R5.3b stop check, R9.10), presets CRUD + fire (R9.6) · M5 ✅ batch management: cancel-pending plans, `batch` filter, GET /api/batches, close-now re-sweep (R4.3). 992 tests |
 | 08b | Cross-account pair (sell on A, buy on B) | ⬜ | [ADR-0011](docs/adr/0011-cross-account-pair.md). Needs two demos + Exness terms check |
 | 09 | Realtime and performance | ⬜ | Streaming connection lands in Phase 03 instead (ADR-0007) |
 | 10 | Hardening and go-live | ⬜ | |
@@ -69,7 +69,7 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - 2026-11-21: Deferred: R1.1 batch filter → Phase 08 with R9.1; stale-quote check → drift guard §7 (Phase 04/06)
 
 ## Carry-overs to Phase 08 (from the §9 rules review, 2026-11-25)
-- **R4.3 re-sweep** (M5): close-now now cancels first; still to build: after closing, re-sweep the book for matching orders/positions that appeared (≤ 3 passes), "done" only when empty.
+- ~~R4.3 re-sweep~~ done (M5): after the first close, ≤3 sweeps re-read the book; result in `executions.summary.sweep {passes, remaining, clean}` plus a `close_now.sweep` audit row. The UI (M6) must show "done" only when `clean`.
 - **R5.3b** stop verification after every entry (repair SL or close the position), **R9.10** systemic-failure abort, **R9.11** fill-drift breaker, **R9.12** pending expiry: executor work in M2/M3/M6.
 - **[T] on demo before live:** magic > 2^32 round-trips; comment + clientId come back; account default magic is 0; market order with SL/TP is atomic; calculateMargin vs real margin change and its credit cost; cancel-while-frozen; Exness count limits.
 - Add retcodes 10013/10015/10017/10018/10019/10026/10027/10030/10033/10034/10040/10046 to src/broker/retcodes.ts after re-verifying on the MT5 page.

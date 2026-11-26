@@ -848,6 +848,152 @@
         }
       }
     },
+    "/api/batches": {
+      "get": {
+        "summary": "Batches on the book now (positions and pending orders by batch number), newest first",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "batchSeq": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "magic": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "symbols": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "positions": {
+                            "type": "object",
+                            "properties": {
+                              "count": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "buys": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "sells": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "lots": {
+                                "type": "number"
+                              },
+                              "profit": {
+                                "type": "number"
+                              },
+                              "withoutStop": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": ["count", "buys", "sells", "lots", "profit", "withoutStop"],
+                            "additionalProperties": false
+                          },
+                          "orders": {
+                            "type": "object",
+                            "properties": {
+                              "count": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "buys": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "sells": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "lots": {
+                                "type": "number"
+                              }
+                            },
+                            "required": ["count", "buys", "sells", "lots"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": ["batchSeq", "magic", "symbols", "positions", "orders"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["items"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHENTICATED | TOTP_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN_ORIGIN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "INTERNAL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "BROKER_UNAVAILABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/plans": {
       "post": {
         "summary": "Dry run: build and store a plan for 30 s",
@@ -884,6 +1030,11 @@
                                 "type": "integer",
                                 "minimum": 0,
                                 "maximum": 9007199254740991
+                              },
+                              "batch": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 999999999
                               },
                               "inProfitOnly": {
                                 "type": "boolean"
@@ -929,6 +1080,11 @@
                                 "minimum": 0,
                                 "maximum": 9007199254740991
                               },
+                              "batch": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 999999999
+                              },
                               "inProfitOnly": {
                                 "type": "boolean"
                               }
@@ -968,6 +1124,11 @@
                                 "type": "integer",
                                 "minimum": 0,
                                 "maximum": 9007199254740991
+                              },
+                              "batch": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 999999999
                               },
                               "inProfitOnly": {
                                 "type": "boolean"
@@ -1010,6 +1171,11 @@
                                 "minimum": 0,
                                 "maximum": 9007199254740991
                               },
+                              "batch": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 999999999
+                              },
                               "inProfitOnly": {
                                 "type": "boolean"
                               }
@@ -1024,6 +1190,47 @@
                           }
                         },
                         "required": ["action", "filter", "distancePoints"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "action": {
+                            "type": "string",
+                            "const": "cancel"
+                          },
+                          "filter": {
+                            "type": "object",
+                            "properties": {
+                              "symbol": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32,
+                                "pattern": "^[A-Za-z0-9._#-]+$"
+                              },
+                              "side": {
+                                "type": "string",
+                                "enum": ["ALL", "BUY", "SELL"]
+                              },
+                              "magic": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "batch": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 999999999
+                              },
+                              "inProfitOnly": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": ["symbol", "side"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": ["action", "filter"],
                         "additionalProperties": false
                       }
                     ]
@@ -1318,7 +1525,16 @@
                     },
                     "action": {
                       "type": "string",
-                      "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
+                      "enum": [
+                        "levels",
+                        "closeAt",
+                        "close",
+                        "breakeven",
+                        "lock",
+                        "cancel",
+                        "market",
+                        "ladder"
+                      ]
                     },
                     "symbol": {
                       "type": "string"
@@ -2024,7 +2240,16 @@
                     },
                     "action": {
                       "type": "string",
-                      "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
+                      "enum": [
+                        "levels",
+                        "closeAt",
+                        "close",
+                        "breakeven",
+                        "lock",
+                        "cancel",
+                        "market",
+                        "ladder"
+                      ]
                     },
                     "symbol": {
                       "type": "string"
@@ -2340,6 +2565,11 @@
                         "minimum": 0,
                         "maximum": 9007199254740991
                       },
+                      "batch": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 999999999
+                      },
                       "inProfitOnly": {
                         "type": "boolean"
                       }
@@ -2388,7 +2618,16 @@
                             },
                             "action": {
                               "type": "string",
-                              "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
+                              "enum": [
+                                "levels",
+                                "closeAt",
+                                "close",
+                                "breakeven",
+                                "lock",
+                                "cancel",
+                                "market",
+                                "ladder"
+                              ]
                             },
                             "symbol": {
                               "type": "string"
@@ -4822,7 +5061,16 @@
                     },
                     "action": {
                       "type": "string",
-                      "enum": ["levels", "closeAt", "close", "breakeven", "lock", "market", "ladder"]
+                      "enum": [
+                        "levels",
+                        "closeAt",
+                        "close",
+                        "breakeven",
+                        "lock",
+                        "cancel",
+                        "market",
+                        "ladder"
+                      ]
                     },
                     "symbol": {
                       "type": "string"

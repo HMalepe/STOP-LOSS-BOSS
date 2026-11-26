@@ -4,7 +4,7 @@
  * is exactly what runs" can be checked by hashing.
  */
 import { decideCloseAt } from "./closeAt";
-import { compareIds, duplicateIds, matchesOrder, matchesPosition } from "./filter";
+import { compareIds, duplicateIds, matchesOrder, matchesPosition, pendingSide } from "./filter";
 import { decideBreakeven, decideLock, type HelperDecision } from "./helpers";
 import { orderProblems, positionGridProblems, positionProblems, uniqueById } from "./snapshot";
 import {
@@ -47,6 +47,8 @@ export type PlanRequest =
     }
   | { readonly action: "closeAt"; readonly filter: PositionFilter; readonly price: number }
   | { readonly action: "close"; readonly filter: PositionFilter; readonly cancelPending: boolean }
+  /** OD5 / R4.8: cancel the pending orders matching the filter (symbol, side by order type, magic). Positions are never touched. */
+  | { readonly action: "cancel"; readonly filter: PositionFilter }
   | { readonly action: "breakeven"; readonly filter: PositionFilter; readonly offsetPoints: number }
   | { readonly action: "lock"; readonly filter: PositionFilter; readonly distancePoints: number };
 
@@ -138,6 +140,7 @@ function validRequest(req: PlanRequest): string | null {
     case "closeAt":
       return positive(req.price) ? null : "Enter a valid trigger price.";
     case "close":
+    case "cancel":
       return null;
     case "breakeven":
       return Number.isSafeInteger(req.offsetPoints) &&
@@ -500,6 +503,33 @@ export function buildPlan(req: PlanRequest, snap: MarketSnapshot, opts: PlanOpti
     ...snap.positions.filter((p) => p.symbol === symbol).flatMap(positionProblems),
     ...snap.orders.filter((o) => o.symbol === symbol).flatMap(orderProblems),
   ];
+
+  if (req.action === "cancel") {
+    // By ticket: needs neither spec nor quote (like close-now, R4.7), and de-duplicates rather than refusing (R0.3).
+    const orders = uniqueById(snap.orders).filter((o) => matchesOrder(o, req.filter));
+    if (orders.length === 0) return fail({ code: "NO_MATCH", message: "No pending orders match." });
+    const items: PlanItem[] = [...orders]
+      .sort((a, b) => compareIds(a.id, b.id))
+      .map((o) => ({ op: "cancel", orderId: o.id }));
+    const buys = orders.filter((o) => pendingSide(o.type) === "BUY").length;
+    return {
+      ok: true,
+      plan: {
+        action: "cancel",
+        symbol,
+        quote: null,
+        items,
+        skipped: [],
+        breakdown: { buys, sells: orders.length - buys, cancels: orders.length },
+        warnings: [
+          "Open positions are not touched. Only pending orders are cancelled.",
+          ...(dupes.length > 0
+            ? [`Broker sent duplicate tickets (${dupes.join(", ")}); each cancels once.`]
+            : []),
+        ],
+      },
+    };
+  }
 
   if (req.action === "close") {
     // R4.7 + R0.3 + R0.5: close-now de-duplicates and warns instead of refusing.

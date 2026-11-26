@@ -127,7 +127,7 @@ describe("POST /api/plans", () => {
   it.each([
     [{ action: "market" }, /^symbol:/],
     [{ action: "ladder", symbol: "XAUUSD" }, /^type:/],
-    [{ action: "cancel", filter: gold() }, /Order Desk/],
+    [{ action: "cancel", filter: { ...gold(), magic: 5, batch: 4 } }, /magic or batch, not both/],
     [{ action: "levels", filter: gold() }, /SL, a TP, or both/],
     [{ action: "levels", filter: gold(), stopLoss: -1 }, /^stopLoss:/],
     [{ action: "levels", filter: gold(), stopLoss: 2600, sneaky: true }, /^body:|sneaky/],

@@ -4,7 +4,7 @@ import { BrokerError } from "@/broker/BrokerProvider";
 import { killSwitchState } from "@/server/killSwitch";
 import { AccountModeError, type TradingServices } from "@/server/trading/services";
 import { createEntryPlan, ENTRY_ACTIONS, entryBody, type EntryBody } from "@/server/trading/entryPlans";
-import { createPlan, LATER_ACTIONS, loadPlan, planBody, type PlanBody } from "@/server/trading/plans";
+import { createPlan, loadPlan, planBody, type PlanBody } from "@/server/trading/plans";
 import {
   outcomeOf,
   progressView,
@@ -18,6 +18,7 @@ import type { AuthDeps, Session } from "@/server/auth/login";
 import { SessionLimiter, type Budget } from "./sessionLimiter";
 import { closeNow, closeNowBody, history, retryFailed } from "@/server/trading/manage";
 import type { PlanSummary } from "@/server/trading/plans";
+import { groupBatches } from "@/domain/batches";
 import { loadState, pagePositions } from "@/server/trading/state";
 import { auditKey, audit } from "@/server/audit/audit";
 import type { Db } from "@/server/db/sql";
@@ -115,15 +116,22 @@ export function makeTradingRoutes(
       );
     }),
 
+    /** GET /api/batches: the batches on the book now (R9.9), newest first. Manual trades and other EAs never appear. */
+    batches: guard.authed({}, async ({ deps, session }) => {
+      const limited = throttle(deps, session, "read");
+      if (limited !== null) return limited;
+      return withBroker(services, async (svc) => {
+        const [positions, orders] = await Promise.all([svc.broker.getPositions(), svc.broker.getOrders()]);
+        return ok({ items: groupBatches(positions, orders, svc.entry.magicPrefix) });
+      });
+    }),
+
     /** POST /api/plans: a dry run. Nothing is sent to the broker; the plan is stored for 30 s. */
     createPlan: guard.authed({}, async ({ req, deps, session }) => {
       const limited = throttle(deps, session, "plan");
       if (limited !== null) return limited;
       const raw = await parseJson(req, z.object({ action: z.string() }).loose());
       if (!raw.ok) return fail("VALIDATION", raw.message);
-      if (LATER_ACTIONS.has(raw.value.action)) {
-        return fail("VALIDATION", `"${raw.value.action}" arrives with the Order Desk. Not available yet.`);
-      }
       const isEntry = ENTRY_ACTIONS.has(raw.value.action);
       const body = isEntry ? entryBody.safeParse(raw.value) : planBody.safeParse(raw.value);
       if (!body.success) {
