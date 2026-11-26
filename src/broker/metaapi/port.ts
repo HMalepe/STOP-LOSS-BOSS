@@ -18,6 +18,10 @@ export interface TradeOptionsPort {
   readonly magic: number;
   readonly comment: string;
   readonly clientId: string;
+  /** Market orders (R9.11): ORDER_FILLING_* in priority order. */
+  readonly fillingModes?: string[];
+  /** Pending orders (R9.12). */
+  readonly expiration?: { readonly type: string; readonly time?: Date };
 }
 
 export interface MetaApiConnectionPort {

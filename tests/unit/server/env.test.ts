@@ -94,6 +94,12 @@ describe("loadEnv per mode", () => {
     expect(problemsOf({ ...demoBase, SPREAD_MAX_POINTS: "EURUSD=30" })[0]).toMatch(/^SPREAD_MAX_POINTS:/);
   });
 
+  it("R9.11 MAX_FILL_DRIFT_POINTS: 50 by default, a positive integer", () => {
+    expect(loadEnv(demoBase).MAX_FILL_DRIFT_POINTS).toBe(50);
+    expect(loadEnv({ ...demoBase, MAX_FILL_DRIFT_POINTS: "120" }).MAX_FILL_DRIFT_POINTS).toBe(120);
+    expect(problemsOf({ ...demoBase, MAX_FILL_DRIFT_POINTS: "0" })[0]).toMatch(/^MAX_FILL_DRIFT_POINTS:/);
+  });
+
   it("R9.2 COMMISSION_PER_LOT: 0 by default, a non-negative number, bounded", () => {
     expect(loadEnv(demoBase).COMMISSION_PER_LOT).toBe(0);
     expect(loadEnv({ ...demoBase, COMMISSION_PER_LOT: "7" }).COMMISSION_PER_LOT).toBe(7);

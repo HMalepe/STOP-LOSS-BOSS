@@ -26,6 +26,7 @@
 Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 
 ## Decisions log (one line each; link the ADR)
+- 2026-11-26: R9.11 fill modes come from the symbol spec, IOC first (FOK, the SDK default, can never partially fill); every market order carries its expected fill; a real fill more than MAX_FILL_DRIFT_POINTS away halts the rest of the batch. INVALID_FILL also halts a batch (all orders share the modes). R9.12 ladders always send an explicit expiry. Exness-specific behaviour of both is still [T] on demo
 - 2026-11-25: R9.3 margin and R9.4b spread guard now use `src/domain/margin.ts` and `spreadGuard.ts`, written by the UI-branch session (identical files, so a later merge is clean). Not taken from that branch: its entries.ts/volume.ts/batch.ts duplicate this branch's. OWNER: decide which session owns the Order Desk backend
 - 2026-11-25: Presets store RECIPES (the same zod schema as POST /api/plans, so never more lenient). Fire = the shared previewPlan path: fresh live quote/spec, new batch number, same risk/margin/spread/caps checks, plan.created audit with presetId. Absolute-price presets (ladders, price SL/TP) are flagged. ≤ 50 presets, unique names, pinned first
 - 2026-11-25: Code aligned to the reviewed §9 (doc wins): R5.1 typed lots must be on the step grid (refused, never rounded); R5.5b stop strictly > d from a pending's own price; R9.1 clientId = base36(seq) + 3-digit index and reconcile matches magic AND clientId (a real cross-batch collision existed); R9.2 rounds each order UP to the cent, COMMISSION_PER_LOT, and R9.2b: no SL only with explicit noStop (this keeps the owner's "allow", it just can't happen by omission)
@@ -105,10 +106,9 @@ Legend: ⬜ not started · 🟨 in progress · ✅ done · ⛔ blocked
 - ADR-0010 one-request panic close: verify on demo first.
 
 ## Order Desk: code vs reviewed §9 (as of 2026-11-25)
-Done: R5.1 · R5.3b (stop verified or position closed) · R5.5b · R9.1 ids + reconcile on magic AND clientId · R9.2 rounding/commission/noStop · R9.3 (net of existing, +10%, 300%/500% rules) · R9.4/R9.4b (floor, slack, spike-robust baseline) · R9.5 · R9.7 (free margin re-read at execute) · R9.10 (systemic failures stop the batch).
-Still to build (doc wins):
+Done: R5.1 · R5.3b (stop verified or position closed) · R5.5b · R9.1 ids + reconcile on magic AND clientId · R9.2 rounding/commission/noStop · R9.3 (net of existing, +10%, 300%/500% rules) · R9.4/R9.4b (floor, slack, spike-robust baseline) · R9.5 · R9.7 (free margin re-read at execute) · R9.10 (systemic failures stop the batch) · R9.11 (fill modes IOC-first + drift breaker, MAX_FILL_DRIFT_POINTS=50) · R9.12 (pending expiry: day by default, GTC opt-in + flagged, or a timed expiry within 30 days).
+Still to build (doc wins; domain + server side is otherwise complete):
 - R9.4b re-check between waves of a long batch; worst-case stop-out warning needs the broker's stop-out level (MetaApi account info has none)
-- R9.11 explicit fillingModes + fill-drift breaker (MAX_FILL_DRIFT_POINTS); R9.12 pending expiry (default end of day)
 - R4.3 cancel-first close-now is done by the UI session
 Known cost: R5.3b reads the positions list once per market entry (stream read, no credits); batch it per wave if a 500-order batch feels slow on demo.
 

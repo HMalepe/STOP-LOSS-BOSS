@@ -98,6 +98,48 @@ afterEach(() => {
   resetSharedMetaApiBroker();
 });
 
+/** The arguments of the last call to a vi.fn() whose declared signature takes none. */
+const lastArgs = (fn: unknown): unknown[] => (fn as { mock: { lastCall?: unknown[] } }).mock.lastCall ?? [];
+
+describe("R9.11 / R9.12 order options reach the SDK", () => {
+  it("market: fillingModes in priority order; absent when the plan didn't set any", async () => {
+    const conn = fake();
+    const b = new MetaApiBroker(conn);
+    await b.placeMarket({ ...market, fillingModes: ["ORDER_FILLING_IOC", "ORDER_FILLING_FOK"] });
+    expect(conn.createMarketBuyOrder).toHaveBeenLastCalledWith("EURUSD", 0.1, 1.08, undefined, {
+      magic: tag.magic,
+      comment: tag.comment,
+      clientId: tag.clientId,
+      fillingModes: ["ORDER_FILLING_IOC", "ORDER_FILLING_FOK"],
+    });
+    await b.placeMarket(market);
+    expect(lastArgs(conn.createMarketBuyOrder)[4]).not.toHaveProperty("fillingModes");
+  });
+
+  it("pending: expiration with a real Date for a timed order; type only for DAY and GTC", async () => {
+    const conn = fake();
+    const b = new MetaApiBroker(conn);
+    const pending = {
+      ...tag,
+      symbol: "EURUSD",
+      type: "BUY_LIMIT" as const,
+      volume: 0.1,
+      openPrice: 1.08,
+      sl: 1.07,
+      tp: null,
+    };
+    const options = () => lastArgs(conn.createLimitBuyOrder)[5] as { expiration?: object } | undefined;
+    await b.placePending({ ...pending, expiration: { type: "ORDER_TIME_DAY" } });
+    expect(options()).toMatchObject({ expiration: { type: "ORDER_TIME_DAY" } });
+    expect(options()?.expiration).not.toHaveProperty("time");
+    const at = "2026-11-27T10:00:00.000Z";
+    await b.placePending({ ...pending, expiration: { type: "ORDER_TIME_SPECIFIED", time: at } });
+    expect(options()?.expiration).toEqual({ type: "ORDER_TIME_SPECIFIED", time: new Date(at) });
+    await b.placePending(pending);
+    expect(options()).not.toHaveProperty("expiration");
+  });
+});
+
 describe("R9.3 margin (calculateMargin)", () => {
   it("asks MetaApi with the SDK's order shape and returns the margin", async () => {
     const conn = fake();

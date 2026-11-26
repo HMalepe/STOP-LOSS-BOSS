@@ -270,7 +270,10 @@ export class MetaApiBroker implements BrokerProvider {
   placeMarket(req: MarketOrderReq): Promise<TradeResult> {
     const sl = req.sl ?? undefined;
     const tp = req.tp ?? undefined;
-    const options = tradeOptions(req);
+    const options: TradeOptionsPort = {
+      ...tradeOptions(req),
+      ...(req.fillingModes === undefined ? {} : { fillingModes: [...req.fillingModes] }),
+    };
     return this.#trade("market", () =>
       req.side === "BUY"
         ? this.#conn.createMarketBuyOrder(req.symbol, req.volume, sl, tp, options)
@@ -281,7 +284,17 @@ export class MetaApiBroker implements BrokerProvider {
   placePending(req: PendingOrderReq): Promise<TradeResult> {
     const sl = req.sl ?? undefined;
     const tp = req.tp ?? undefined;
-    const o = tradeOptions(req);
+    const o: TradeOptionsPort = {
+      ...tradeOptions(req),
+      ...(req.expiration === undefined
+        ? {}
+        : {
+            expiration: {
+              type: req.expiration.type,
+              ...(req.expiration.time === undefined ? {} : { time: new Date(req.expiration.time) }),
+            },
+          }),
+    };
     const c = this.#conn;
     const send: Record<PendingOrderReq["type"], (() => Promise<unknown>) | null> = {
       BUY_LIMIT: () => c.createLimitBuyOrder(req.symbol, req.volume, req.openPrice, sl, tp, o),

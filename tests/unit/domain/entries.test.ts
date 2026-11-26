@@ -237,3 +237,34 @@ describe("OD1 bulk market entries", () => {
     );
   });
 });
+
+describe("R9.11 fill modes and expected fill", () => {
+  const withModes = (fillingModes: string[]) => ({ spec: { ...EURUSD, fillingModes }, quote: Q });
+
+  it("passes the symbol's allowed fill modes explicitly, IOC first (only IOC can partially fill), then FOK, then RETURN", () => {
+    const p = ok(
+      build(req(), withModes(["SYMBOL_FILLING_FOK", "SYMBOL_FILLING_IOC", "SYMBOL_FILLING_RETURN"])),
+    );
+    expect(p.items[0]?.fillingModes).toEqual([
+      "ORDER_FILLING_IOC",
+      "ORDER_FILLING_FOK",
+      "ORDER_FILLING_RETURN",
+    ]);
+    expect(ok(build(req(), withModes(["SYMBOL_FILLING_FOK"]))).items[0]?.fillingModes).toEqual([
+      "ORDER_FILLING_FOK",
+    ]);
+  });
+
+  it("a symbol with no usable fill mode refuses the batch; a spec that doesn't say leaves the SDK default", () => {
+    const r = build(req(), withModes(["SYMBOL_FILLING_BOC"]));
+    expect(!r.ok && r.error.message).toBe(
+      "EURUSD allows no fill mode this app can use (FOK, IOC or RETURN).",
+    );
+    expect("fillingModes" in (ok(build()).items[0] ?? {})).toBe(false);
+  });
+
+  it("every order records the price it expected to fill at (buy: ask, sell: bid) for the drift breaker", () => {
+    expect(ok(build()).items.map((i) => i.expectedFill)).toEqual([1.0861, 1.0861, 1.0861]);
+    expect(ok(build(req({ side: "SELL" }))).items[0]?.expectedFill).toBe(1.086);
+  });
+});

@@ -249,3 +249,58 @@ describe("entryProblems: execute re-checks every stored entry against the market
     expect(entryProblems(entry, marketFrom(EURUSD, quote(1.0845, 1.0846)))[0]).toMatch(/SL/);
   });
 });
+
+describe("R9.12 pending expiry", () => {
+  const NOW = Q.time;
+  const modes = (expirationModes: string[]) => ({ spec: { ...EURUSD, expirationModes }, quote: Q });
+  const ALL = [
+    "SYMBOL_EXPIRATION_GTC",
+    "SYMBOL_EXPIRATION_DAY",
+    "SYMBOL_EXPIRATION_SPECIFIED",
+    "SYMBOL_EXPIRATION_SPECIFIED_DAY",
+  ];
+
+  it("default: end of the trading day (ORDER_TIME_DAY), explicit on every order", () => {
+    const p = ok(build(req(), modes(ALL)));
+    expect(p.items.every((i) => i.expiration.type === "ORDER_TIME_DAY")).toBe(true);
+    expect(p.warnings.some((w) => w.includes("GTC"))).toBe(false);
+  });
+
+  it("GTC is an explicit opt-in and the preview flags it", () => {
+    const p = ok(build(req({ expiry: "gtc" }), modes(ALL)));
+    expect(p.items[0]?.expiration).toEqual({ type: "ORDER_TIME_GTC" });
+    expect(p.warnings).toContain(
+      "These orders have no expiry (GTC): they stay until you cancel them, even after the account is stopped out.",
+    );
+  });
+
+  it("a chosen time: ORDER_TIME_SPECIFIED with an ISO time; it must be at least a minute ahead and within 30 days", () => {
+    const at = new Date(NOW + 3_600_000).toISOString();
+    expect(ok(build(req({ expiry: { at } }), modes(ALL))).items[0]?.expiration).toEqual({
+      type: "ORDER_TIME_SPECIFIED",
+      time: at,
+    });
+    for (const bad of [NOW + 30_000, NOW - 1, NOW + 31 * 86_400_000]) {
+      expect(build(req({ expiry: { at: new Date(bad).toISOString() } }), modes(ALL)).ok, String(bad)).toBe(
+        false,
+      );
+    }
+    expect(build(req({ expiry: { at: "not a date" } }), modes(ALL)).ok).toBe(false);
+  });
+
+  it("validated against the symbol's allowed expiration modes, saying which is missing", () => {
+    const noDay = build(req(), modes(["SYMBOL_EXPIRATION_GTC"]));
+    expect(!noDay.ok && noDay.error.message).toBe("EURUSD doesn't allow day expiry. Choose another expiry.");
+    expect(build(req({ expiry: "gtc" }), modes(["SYMBOL_EXPIRATION_DAY"])).ok).toBe(false);
+    expect(
+      build(
+        req({ expiry: { at: new Date(NOW + 3_600_000).toISOString() } }),
+        modes(["SYMBOL_EXPIRATION_GTC"]),
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("a spec that doesn't list expiration modes: the default day expiry is still sent explicitly", () => {
+    expect(ok(build()).items[0]?.expiration.type).toBe("ORDER_TIME_DAY");
+  });
+});

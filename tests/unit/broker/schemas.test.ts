@@ -76,6 +76,32 @@ describe("positions", () => {
   });
 });
 
+describe("symbol spec: fill and expiry modes (R9.11, R9.12)", () => {
+  const raw = {
+    symbol: "EURUSD",
+    digits: 5,
+    point: 0.00001,
+    tickSize: 0.00001,
+    stopsLevel: 0,
+    freezeLevel: 0,
+    minVolume: 0.01,
+    maxVolume: 100,
+    volumeStep: 0.01,
+  };
+  it("carried through when the feed sends them; omitted when it doesn't", () => {
+    expect(
+      parseOne(
+        metaApiSpec,
+        { ...raw, fillingModes: ["SYMBOL_FILLING_FOK"], allowedExpirationModes: ["SYMBOL_EXPIRATION_GTC"] },
+        "spec",
+      ),
+    ).toMatchObject({ fillingModes: ["SYMBOL_FILLING_FOK"], expirationModes: ["SYMBOL_EXPIRATION_GTC"] });
+    const bare = parseOne(metaApiSpec, raw, "spec");
+    expect(bare).not.toHaveProperty("fillingModes");
+    expect(bare).not.toHaveProperty("expirationModes");
+  });
+});
+
 describe("orders", () => {
   const rawOrder = {
     id: 9001,

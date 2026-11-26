@@ -137,6 +137,9 @@ export const metaApiSpec = z
     minVolume: z.number(),
     maxVolume: z.number(),
     volumeStep: z.number(),
+    // R9.11 / R9.12: what the symbol allows. Optional: a feed that omits them leaves the SDK defaults in place.
+    fillingModes: z.array(z.string()).optional(),
+    allowedExpirationModes: z.array(z.string()).optional(),
   })
   .transform((s): SymbolSpec => ({
     symbol: s.symbol,
@@ -149,6 +152,8 @@ export const metaApiSpec = z
     volumeMin: s.minVolume,
     volumeMax: s.maxVolume,
     volumeStep: s.volumeStep,
+    ...(s.fillingModes === undefined ? {} : { fillingModes: s.fillingModes }),
+    ...(s.allowedExpirationModes === undefined ? {} : { expirationModes: s.allowedExpirationModes }),
   }));
 
 export const metaApiPrice = z

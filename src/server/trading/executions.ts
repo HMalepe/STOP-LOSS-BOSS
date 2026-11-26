@@ -259,12 +259,29 @@ const isEntry = (i: StoredItem): i is Entry => i.op === "market" || i.op === "pe
 /** A stored item as the executor runs it. Entries carry their full broker request, tag included (R9.1). */
 export function toExecItem(i: StoredItem): ExecItem {
   if (i.op === "market") {
-    const { symbol, side, volume, sl, tp, magic, comment, clientId } = i;
-    return { op: "market", req: { symbol, side, volume, sl, tp, magic, comment, clientId } };
+    const { symbol, side, volume, sl, tp, magic, comment, clientId, expectedFill, fillingModes } = i;
+    return {
+      op: "market",
+      req: {
+        symbol,
+        side,
+        volume,
+        sl,
+        tp,
+        magic,
+        comment,
+        clientId,
+        expectedFill,
+        ...(fillingModes === undefined ? {} : { fillingModes }),
+      },
+    };
   }
   if (i.op === "pending") {
-    const { symbol, type, volume, openPrice, sl, tp, magic, comment, clientId } = i;
-    return { op: "pending", req: { symbol, type, volume, openPrice, sl, tp, magic, comment, clientId } };
+    const { symbol, type, volume, openPrice, sl, tp, magic, comment, clientId, expiration } = i;
+    return {
+      op: "pending",
+      req: { symbol, type, volume, openPrice, sl, tp, magic, comment, clientId, expiration },
+    };
   }
   return i;
 }

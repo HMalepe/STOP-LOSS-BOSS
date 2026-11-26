@@ -410,3 +410,35 @@ describe("R9.7: free margin is re-read at execute", () => {
     expect(executionId).toBeDefined();
   });
 });
+
+describe("R9.11 / R9.12 through the whole path", () => {
+  it("a ladder stores an explicit day expiry by default and GTC only when asked (flagged in the preview)", async () => {
+    const day = await planId(LADDER);
+    expect(
+      (await itemsOf(day)).every(
+        (i) => (i as { expiration: { type: string } }).expiration.type === "ORDER_TIME_DAY",
+      ),
+    ).toBe(true);
+    const gtc = await preview({ ...LADDER, expiry: "gtc" });
+    const summary = planSummary.parse(await gtc.json());
+    expect(summary.warnings.some((w) => w.startsWith("These orders have no expiry (GTC)"))).toBe(true);
+    expect(
+      (await itemsOf(summary.id)).every(
+        (i) => (i as { expiration: { type: string } }).expiration.type === "ORDER_TIME_GTC",
+      ),
+    ).toBe(true);
+    expect((await preview({ ...LADDER, expiry: "soon" })).status).toBe(400);
+  });
+
+  it("market entries store the expected fill and the batch runs with the drift limit applied", async () => {
+    const id = await planId(MARKET);
+    const first = (await itemsOf(id))[0] as { expectedFill: number };
+    expect(first.expectedFill).toBe(1.08611);
+    const { executionId } = await run(id);
+    const rows = await s.db.query<{ state: string }>(
+      "select state from execution_items where execution_id = $1",
+      [executionId],
+    );
+    expect(rows.every((r) => r.state === "done")).toBe(true);
+  });
+});

@@ -1221,6 +1221,24 @@
                       },
                       "noStop": {
                         "type": "boolean"
+                      },
+                      "expiry": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": ["day", "gtc"]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "at": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["at"],
+                            "additionalProperties": false
+                          }
+                        ]
                       }
                     },
                     "required": ["action", "symbol", "side", "kind", "from", "to", "spacing", "lots"],
@@ -2935,6 +2953,24 @@
                           },
                           "noStop": {
                             "type": "boolean"
+                          },
+                          "expiry": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": ["day", "gtc"]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "at": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["at"],
+                                "additionalProperties": false
+                              }
+                            ]
                           }
                         },
                         "required": ["action", "symbol", "side", "kind", "from", "to", "spacing", "lots"],
@@ -3318,6 +3354,24 @@
                           },
                           "noStop": {
                             "type": "boolean"
+                          },
+                          "expiry": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": ["day", "gtc"]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "at": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["at"],
+                                "additionalProperties": false
+                              }
+                            ]
                           }
                         },
                         "required": ["action", "symbol", "side", "kind", "from", "to", "spacing", "lots"],

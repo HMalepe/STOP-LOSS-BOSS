@@ -92,6 +92,10 @@ export interface MarketEntryItem {
   readonly magic: number;
   readonly comment: string;
   readonly clientId: string;
+  /** R9.11: the price this order expects to fill at (buy: ask, sell: bid). The drift breaker compares the real fill to it. */
+  readonly expectedFill: Price;
+  /** R9.11: allowed fill modes in priority order (IOC first). Absent = the SDK default. */
+  readonly fillingModes?: readonly string[];
 }
 
 export interface MarketBatchPlan {
@@ -160,6 +164,57 @@ function identityProblem(id: BatchIdentity, count: number): string | null {
 }
 
 const NO_SL_WARNING = "No stop loss: the loss on these orders is limited only by your account.";
+
+/**
+ * R9.11: the fill modes to pass, from what the symbol allows. IOC first: with FOK the SDK's default, a partial fill is
+ * impossible (the order is refused instead); IOC fills what the market has and reports the rest (R6.7).
+ * null = the feed didn't list modes (leave the SDK default). A string = a refusal.
+ */
+function fillModes(spec: SymbolSpec): readonly string[] | null | string {
+  if (spec.fillingModes === undefined) return null;
+  const preferred = [
+    ["SYMBOL_FILLING_IOC", "ORDER_FILLING_IOC"],
+    ["SYMBOL_FILLING_FOK", "ORDER_FILLING_FOK"],
+    ["SYMBOL_FILLING_RETURN", "ORDER_FILLING_RETURN"],
+  ] as const;
+  const modes = preferred
+    .filter(([symbolMode]) => spec.fillingModes?.includes(symbolMode) === true)
+    .map(([, m]) => m);
+  return modes.length === 0
+    ? `${spec.symbol} allows no fill mode this app can use (FOK, IOC or RETURN).`
+    : modes;
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * R9.12: every ladder order carries an explicit expiry, checked against what the symbol allows.
+ * `now` is the quote's time (fresh within R7.2): the domain has no clock.
+ */
+function resolveExpiry(
+  expiry: LadderRequest["expiry"],
+  spec: SymbolSpec,
+  now: number,
+): { readonly type: ExpirationType; readonly time?: string } | string {
+  const allowed = (mode: string, what: string): string | null =>
+    spec.expirationModes === undefined || spec.expirationModes.includes(mode)
+      ? null
+      : `${spec.symbol} doesn't allow ${what} expiry. Choose another expiry.`;
+  if (expiry === undefined || expiry === "day") {
+    return allowed("SYMBOL_EXPIRATION_DAY", "day") ?? { type: "ORDER_TIME_DAY" };
+  }
+  if (expiry === "gtc") return allowed("SYMBOL_EXPIRATION_GTC", "GTC") ?? { type: "ORDER_TIME_GTC" };
+  const at = Date.parse(expiry.at);
+  if (!Number.isFinite(at)) return "The expiry time isn't a valid date.";
+  if (at < now + 60_000) return "The expiry must be at least a minute from now.";
+  if (at > now + 30 * DAY_MS) return "The expiry can be at most 30 days away. Use GTC for no expiry.";
+  return (
+    allowed("SYMBOL_EXPIRATION_SPECIFIED", "timed") ?? {
+      type: "ORDER_TIME_SPECIFIED",
+      time: expiry.at, // parsed above, so a valid date; the broker adapter turns it into a Date
+    }
+  );
+}
 
 /** R5.1: the step count if `volume` is exactly on the grid (within 1e-9 of a whole step), else null. */
 function gridSteps(volume: number, step: number): number | null {
@@ -240,6 +295,9 @@ export function buildMarketBatch(
 
   const slPrice = sl === null ? null : fromPoints(sl, spec);
   const tpPrice = tp === null ? null : fromPoints(tp, spec);
+  const modes = fillModes(spec);
+  if (typeof modes === "string") return invalid(modes);
+  const expectedFill = fromPoints(req.side === "BUY" ? m.ask : m.bid, spec);
   const items: MarketEntryItem[] = Array.from({ length: req.count }, (_, i) => ({
     op: "market",
     symbol: req.symbol,
@@ -250,6 +308,8 @@ export function buildMarketBatch(
     magic: id.magic,
     comment,
     clientId: entryClientId(id, i),
+    expectedFill,
+    ...(modes === null ? {} : { fillingModes: modes }),
   }));
   return {
     ok: true,
@@ -308,6 +368,8 @@ export interface LadderRequest {
   /** R5.6: offsets in points from each level's own price. */
   readonly slOffsetPoints?: number | undefined;
   readonly tpOffsetPoints?: number | undefined;
+  /** R9.12: default "day" (end of the trading day). "gtc" is an explicit opt-in; { at } is an ISO time. */
+  readonly expiry?: "day" | "gtc" | { readonly at: string } | undefined;
 }
 
 export interface PendingEntryItem {
@@ -321,7 +383,11 @@ export interface PendingEntryItem {
   readonly magic: number;
   readonly comment: string;
   readonly clientId: string;
+  /** R9.12: always explicit. time is ISO, only for ORDER_TIME_SPECIFIED. */
+  readonly expiration: { readonly type: ExpirationType; readonly time?: string };
 }
+
+export type ExpirationType = "ORDER_TIME_DAY" | "ORDER_TIME_GTC" | "ORDER_TIME_SPECIFIED";
 
 export interface LadderPlan {
   readonly symbol: string;
@@ -390,6 +456,14 @@ export function buildLadder(
   const tag = identityProblem(id, levels.length);
   if (tag !== null) return invalid(tag);
 
+  const expiry = resolveExpiry(req.expiry, spec, quote.time);
+  if (typeof expiry === "string") return invalid(expiry);
+  if (req.expiry === "gtc") {
+    warnings.push(
+      "These orders have no expiry (GTC): they stay until you cancel them, even after the account is stopped out.",
+    );
+  }
+
   // R9.5 / R5.1: per-level lots on integer steps, rounded down, never up.
   const lotSteps = ladderLots(req.lots, levels.length, spec);
   if (typeof lotSteps === "string") return invalid(lotSteps);
@@ -439,6 +513,7 @@ export function buildLadder(
       magic: id.magic,
       comment: `OD:${id.batchShort}`,
       clientId: entryClientId(id, i),
+      expiration: expiry,
     });
   }
   if (bad.length > 0) {

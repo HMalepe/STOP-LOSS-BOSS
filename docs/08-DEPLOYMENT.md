@@ -23,6 +23,7 @@ MAX_TOTAL_LOTS=5
 MAX_RISK_PCT_PER_ACTION=2   # % of equity at risk to SL, per action (R9.2)
 SPREAD_GUARD_K=3            # adaptive spread guard multiplier (R9.4b)
 SPREAD_WINDOW_SEC=300
+MAX_FILL_DRIFT_POINTS=50     # R9.11: halt the rest of a batch if a fill is this many points from the expected price
 COMMISSION_PER_LOT=0         # R9.2: account-currency commission per lot, added to risk (raw/zero accounts)
 SPREAD_MIN_SLACK_POINTS=5    # R9.4b: the limit is at least normal + this (raw accounts have a 0-2 pt median)
 SPREAD_FLOOR_POINTS=10       # R9.4b: ...and never below this many points

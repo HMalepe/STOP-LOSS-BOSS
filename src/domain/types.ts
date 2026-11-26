@@ -28,6 +28,12 @@ export interface SymbolSpec {
   readonly volumeMin: number;
   readonly volumeMax: number;
   readonly volumeStep: number;
+  /**
+   * SYMBOL_FILLING_* modes the symbol allows (MetaApi `fillingModes`). Absent = the feed didn't say: the SDK default applies.
+   */
+  readonly fillingModes?: readonly string[];
+  /** SYMBOL_EXPIRATION_* modes pending orders may use (MetaApi `allowedExpirationModes`). Absent = not checked. */
+  readonly expirationModes?: readonly string[];
 }
 
 export interface Quote {

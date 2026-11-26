@@ -1458,3 +1458,62 @@ describe("R9.10: a systemic failure stops the rest of the batch", () => {
     expect(results.some((r) => r.outcome === "skipped")).toBe(false);
   });
 });
+
+describe("R9.11: the fill-drift breaker stops a batch whose fills run away from the expected price", () => {
+  const withExpected = (clientId: string, expectedFill: number, sl: number | null = 1.08): ExecItem => ({
+    op: "market",
+    req: {
+      symbol: "EURUSD",
+      side: "BUY",
+      volume: 0.1,
+      sl,
+      tp: null,
+      magic: 1,
+      comment: "OD:t",
+      clientId,
+      expectedFill,
+    },
+  });
+  const marketCalls = (b: MockBroker) => b.calls.filter((c) => c.op === "market").length;
+
+  it("a fill more than the limit from the expected price is reported, and nothing new is sent after it", async () => {
+    const { s, broker, deps } = setup({}, 1);
+    // The mock fills buys at the ask, 1.0861. Expected 1.0800 is 610 points away; the limit is 50.
+    const items = ["a", "b", "c", "d"].map((c) => withExpected(c, 1.08));
+    const { results } = await collect(items, { ...deps, maxFillDriftPoints: 50 }, s);
+    expect(results[0]).toMatchObject({ outcome: "done", driftPoints: 610 });
+    expect(results[0]?.message).toMatch(/filled 610 points from the expected price/);
+    for (const r of results.slice(1)) {
+      expect(r).toMatchObject({ outcome: "skipped", attempts: 0 });
+      expect(r.message).toMatch(
+        /^not sent: a fill 610 points from the expected price stopped the rest of the batch \(R9\.11\)$/,
+      );
+    }
+    expect(marketCalls(broker)).toBe(1);
+  });
+
+  it("within the limit, or no limit configured → nothing stops; works for no-stop entries too", async () => {
+    const near = setup({}, 1);
+    const ok1 = await collect(
+      ["a", "b", "c"].map((c) => withExpected(c, 1.0859)),
+      { ...near.deps, maxFillDriftPoints: 50 },
+      near.s,
+    );
+    expect(ok1.results.map((r) => r.outcome)).toEqual(["done", "done", "done"]);
+    const off = setup({}, 1);
+    const ok2 = await collect(
+      ["a", "b"].map((c) => withExpected(c, 1.08)),
+      off.deps,
+      off.s,
+    );
+    expect(ok2.results.map((r) => r.outcome)).toEqual(["done", "done"]);
+    const noStop = setup({}, 1);
+    const ns = await collect(
+      ["a", "b", "c"].map((c) => withExpected(c, 1.08, null)),
+      { ...noStop.deps, maxFillDriftPoints: 50 },
+      noStop.s,
+    );
+    expect(ns.results.map((r) => r.outcome)).toEqual(["done", "skipped", "skipped"]);
+    expect(ns.results[0]?.driftPoints).toBe(610);
+  });
+});

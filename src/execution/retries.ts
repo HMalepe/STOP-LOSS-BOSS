@@ -92,6 +92,8 @@ export interface RunContext {
   readonly yieldWorker?: () => void;
   /** Broker outage detection. Normal runs fail fast while it's open; close-now (urgent) only feeds it (R6.6). */
   readonly breaker?: CircuitBreaker;
+  /** R9.11: see ExecuteDeps. verifyEntryStop annotates a fill that ran further than this from the expected price. */
+  readonly maxFillDriftPoints?: number;
 }
 
 type Next =

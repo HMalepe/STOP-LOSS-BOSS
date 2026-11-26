@@ -83,6 +83,8 @@ export const ladderBody = z.strictObject({
   slOffsetPoints: z.number().optional(),
   tpOffsetPoints: z.number().optional(),
   noStop: z.boolean().optional(),
+  /** R9.12: default "day". GTC is an explicit opt-in; { at } is an ISO time within 30 days. */
+  expiry: z.union([z.enum(["day", "gtc"]), z.strictObject({ at: z.string() })]).optional(),
 });
 /** A preset's recipe is exactly an entry request (R9.6): the same schema, so a saved recipe can never be more lenient. */
 export const entryBody = z.discriminatedUnion("action", [marketBody, ladderBody]);
@@ -418,6 +420,7 @@ async function createEntryPlan(
             lots: body.lots,
             slOffsetPoints: body.slOffsetPoints,
             tpOffsetPoints: body.tpOffsetPoints,
+            expiry: body.expiry,
           },
           { spec, quote },
           id,

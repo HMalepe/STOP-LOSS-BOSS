@@ -38,6 +38,8 @@ export interface ItemResult {
   /** R6.7: an entry that filled only partly, and how much did fill (when it could be read). */
   readonly partial?: boolean;
   readonly filledVolume?: number;
+  /** R9.11: points between the real fill and the expected price (market entries with an expectedFill). */
+  readonly driftPoints?: number;
 }
 
 export interface Progress {

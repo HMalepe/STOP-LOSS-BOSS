@@ -25,7 +25,8 @@ export async function verifyEntryStop(
   res: ItemResult,
   ctx: RunContext,
 ): Promise<ItemResult> {
-  if (req.sl === null) return res; // noStop: nothing was requested, nothing to verify
+  // noStop with no expected price: nothing to verify and nothing to measure.
+  if (req.sl === null && req.expectedFill === undefined) return res;
   const positionId = res.positionId;
   const unverified = (why: string): ItemResult => ({
     ...res,
@@ -35,29 +36,55 @@ export async function verifyEntryStop(
   if (positionId === undefined) return unverified("no ticket came back");
 
   let tick: number;
+  let point: number;
   try {
-    tick = (await ctx.broker.getSymbolSpec(req.symbol)).tickSize;
+    const spec = await ctx.broker.getSymbolSpec(req.symbol);
+    tick = spec.tickSize;
+    point = spec.point;
   } catch {
-    return unverified("symbol spec unavailable");
+    // With no stop requested there is nothing to verify: only the drift measurement is lost.
+    return req.sl === null ? res : unverified("symbol spec unavailable");
   }
 
   // The stream can lag a fill by a moment: poll like reconcile does before giving up.
   let sl: number | null | undefined;
+  let openPrice: number | undefined;
   for (let poll = 0; poll < Math.max(1, ctx.policy.reconcilePolls); poll++) {
     if (poll > 0) await ctx.scheduler.sleep(ctx.policy.reconcileIntervalMs);
     try {
       const pos = (await ctx.broker.getPositions()).find((p) => p.id === positionId);
       if (pos !== undefined) {
         sl = pos.sl;
+        openPrice = pos.openPrice;
         break;
       }
     } catch {
       // try again
     }
   }
-  if (sl === undefined) return unverified("position not visible yet");
+  if (sl === undefined) return req.sl === null ? res : unverified("position not visible yet");
+
+  // R9.11: how far the real fill is from the price the plan expected, in points.
+  const drift =
+    req.expectedFill === undefined || openPrice === undefined
+      ? undefined
+      : Math.round(Math.abs(openPrice - req.expectedFill) / point);
+  const withDrift = (r: ItemResult): ItemResult =>
+    drift === undefined
+      ? r
+      : {
+          ...r,
+          driftPoints: drift,
+          ...(ctx.maxFillDriftPoints !== undefined && drift > ctx.maxFillDriftPoints
+            ? {
+                message: `${r.message === "" ? "placed" : r.message}; filled ${String(drift)} points from the expected price`,
+              }
+            : {}),
+        };
+
+  if (req.sl === null) return withDrift(res);
   // Within one tick (plus float noise) counts as matching.
-  if (sl !== null && Math.abs(sl - req.sl) <= tick * 1.000001) return res;
+  if (sl !== null && Math.abs(sl - req.sl) <= tick * 1.000001) return withDrift(res);
 
   let latency = res.latencyMs;
   let attempts = res.attempts;
@@ -93,10 +120,12 @@ export async function verifyEntryStop(
       before: { sl: null, tp: null },
     });
     if (r?.class === "success") {
-      return done({
-        ...res,
-        message: "placed; its stop was missing after the fill and has been set (R5.3b)",
-      });
+      return done(
+        withDrift({
+          ...res,
+          message: "placed; its stop was missing after the fill and has been set (R5.3b)",
+        }),
+      );
     }
   }
   for (let i = 0; i < CLOSE_TRIES; i++) {

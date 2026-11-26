@@ -74,6 +74,7 @@ export function buildRunner(
   clock: Clock,
   scheduler: Scheduler = realScheduler,
   obs?: Observability,
+  maxFillDriftPoints?: number,
 ): JobRunner {
   return new InProcessRunner({
     broker,
@@ -86,6 +87,7 @@ export function buildRunner(
       scheduler,
     }),
     concurrency: 8,
+    ...(maxFillDriftPoints === undefined ? {} : { maxFillDriftPoints }),
     costPerTrade: METAAPI_CREDITS.costPerTrade,
     breaker: new CircuitBreaker({
       threshold: BREAKER.threshold,
@@ -248,7 +250,7 @@ async function create(env: Env, clock: Clock): Promise<TradingServices> {
   await assertAccountMatchesMode(broker, env.TRADING_MODE);
   const db = await getDb();
   const observability = new Observability(getLogger());
-  const runner = buildRunner(broker, db, clock, realScheduler, observability);
+  const runner = buildRunner(broker, db, clock, realScheduler, observability, env.MAX_FILL_DRIFT_POINTS);
   // A fresh process holds no runs: anything still "running" in the database was cut off by a restart.
   observability.interrupted(
     await recoverInterrupted(db, (id) => runner.status(id)?.state === "running"),

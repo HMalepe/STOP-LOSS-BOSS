@@ -89,6 +89,8 @@ const schema = z
     // How long running executions get to finish on SIGTERM. The host's kill timeout must exceed it (docs/08).
     SHUTDOWN_DRAIN_MS: int(1_000, 120_000, 15_000),
 
+    // R9.11: a market fill further than this many points from the expected price halts the rest of the batch.
+    MAX_FILL_DRIFT_POINTS: int(1, 100_000, 50),
     // R9.2: commission per lot (account currency) added to the risk to SL. 0 for standard accounts; set it on raw/zero.
     COMMISSION_PER_LOT: z.coerce.number().min(0).max(1000).default(0),
 

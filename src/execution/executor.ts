@@ -38,6 +38,8 @@ export interface ExecuteDeps {
   readonly onCall?: CallLog;
   /** 0..1, for backoff jitter. */
   readonly random?: () => number;
+  /** R9.11: a market fill further than this many points from the expected price halts the rest of the batch. */
+  readonly maxFillDriftPoints?: number;
   /** "urgent" for close-now: served ahead of everything else in the shared limiter. */
   readonly priority?: Priority;
   /** Shared broker-outage breaker (circuitBreaker.ts). */
@@ -58,6 +60,8 @@ const SYSTEMIC_ENTRY_CODES: ReadonlySet<number> = new Set([
   RETCODE.LIMIT_POSITIONS,
   RETCODE.TRADE_DISABLED,
   RETCODE.MARKET_CLOSED,
+  // Not in R9.10's list, but every order of the batch carries the same fill modes: one refusal means all of them.
+  RETCODE.INVALID_FILL,
 ]);
 
 export function execute(items: readonly ExecItem[], deps: ExecuteDeps): AsyncIterable<ExecEvent> {
@@ -93,6 +97,15 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
       SYSTEMIC_ENTRY_CODES.has(r.code)
     ) {
       systemic = r.message || r.stringCode;
+    }
+    if (
+      systemic === undefined &&
+      deps.maxFillDriftPoints !== undefined &&
+      r.outcome === "done" &&
+      r.driftPoints !== undefined &&
+      r.driftPoints > deps.maxFillDriftPoints
+    ) {
+      systemic = `a fill ${String(r.driftPoints)} points from the expected price`;
     }
     results[r.index] = r;
     counts.finished += 1;
@@ -143,7 +156,10 @@ async function run(items: readonly ExecItem[], deps: ExecuteDeps, out: Channel<E
       next += 1;
       if (results[index] !== undefined) continue;
       if (systemic !== undefined && (item.op === "market" || item.op === "pending")) {
-        finish(blank(index, item, "skipped", `not sent: ${systemic} stopped the rest of the batch (R9.10)`));
+        const rule = systemic.endsWith("expected price") ? "R9.11" : "R9.10";
+        finish(
+          blank(index, item, "skipped", `not sent: ${systemic} stopped the rest of the batch (${rule})`),
+        );
         continue;
       }
       if (!(await recordIntent(index, item))) continue;

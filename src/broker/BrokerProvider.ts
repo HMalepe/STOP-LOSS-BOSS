@@ -68,6 +68,10 @@ export interface MarketOrderReq extends Levels, EntryTag {
   readonly symbol: string;
   readonly side: Side;
   readonly volume: number;
+  /** R9.11: allowed fill modes in priority order (ORDER_FILLING_*). Absent = the SDK default. */
+  readonly fillingModes?: readonly string[];
+  /** R9.11: the price the plan expected to fill at. Not sent to the broker: the executor's drift breaker reads it. */
+  readonly expectedFill?: number;
 }
 
 export interface PendingOrderReq extends Levels, EntryTag {
@@ -75,6 +79,8 @@ export interface PendingOrderReq extends Levels, EntryTag {
   readonly type: PendingType;
   readonly volume: number;
   readonly openPrice: number;
+  /** R9.12: explicit expiry (ORDER_TIME_*); time is ISO, only for ORDER_TIME_SPECIFIED. */
+  readonly expiration?: { readonly type: string; readonly time?: string };
 }
 
 export interface BrokerHealth {
