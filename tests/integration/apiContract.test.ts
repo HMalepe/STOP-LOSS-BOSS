@@ -146,6 +146,46 @@ describe("every error code in docs/04, from a real request", () => {
     await expectError(await exec(id), "PRICE_MOVED");
   });
 
+  it("SPREAD_TOO_WIDE and MARGIN_CHANGED (entries, at execute)", async () => {
+    for (let i = 0; i < 40; i++) {
+      s.clock.advance(1_000);
+      svc.entry.sampler.record(
+        { symbol: "XAUUSD", bid: 2650.1, ask: 2650.3, time: s.clock.now() },
+        { point: 0.01, digits: 2, tickSize: 0.01 },
+        s.clock.now(),
+      );
+    }
+    const body = {
+      action: "market",
+      symbol: "XAUUSD",
+      side: "BUY",
+      count: 2,
+      volume: 0.1,
+      sl: { mode: "points", points: 500 },
+      tp: { mode: "points", points: 1000 },
+    };
+    const id = planSummary.parse(
+      await (await routes.createPlan(post("/api/plans", body, s.cookie))).json(),
+    ).id;
+    broker.setQuote("XAUUSD", 2650.1, 2655.1);
+    await expectError(await exec(id), "SPREAD_TOO_WIDE");
+    broker.setQuote("XAUUSD", 2650.1, 2650.3);
+    const b = broker;
+    const poor = makeTradingRoutes(s.guard, () =>
+      Promise.resolve({
+        ...svc,
+        broker: new Proxy(b, {
+          get(t, prop, recv) {
+            if (prop === "getAccount") return async () => ({ ...(await t.getAccount()), freeMargin: 1 });
+            const v: unknown = Reflect.get(t, prop, recv);
+            return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+          },
+        }),
+      }),
+    );
+    await expectError(await exec(id, poor), "MARGIN_CHANGED");
+  });
+
   it("PRICE_STALE", async () => {
     const id = await planId();
     const b = broker;

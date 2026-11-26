@@ -14,7 +14,7 @@ import { roundToTick } from "@/domain/price";
 import type { PlanItem, PositionFilter, Quote, SymbolSpec } from "@/domain/types";
 import type { Db } from "../db/sql";
 import { gates, persistResults, type ExecuteRefusal, type RecordComplete } from "./executions";
-import { loadPlan, storePlan, type PlanSummary } from "./plans";
+import { isPlanItem, loadPlan, storePlan, type PlanSummary } from "./plans";
 import type { TradingServices } from "./services";
 
 const SYMBOL = z
@@ -156,11 +156,12 @@ export async function retryFailed(
   const failed = new Set(retryable.map((r) => `${r.op}|${r.target_id}`));
   const withRow = new Set(rows.map((r) => `${r.op}|${r.target_id}`));
   // No result row at all = never reported: maybe sent (interrupted run). Unknown, never retried.
-  const missing = original.items.filter((i) => !withRow.has(`${i.op}|${targetOfItem(i)}`)).length;
+  const planItems = original.items.filter(isPlanItem);
+  const missing = planItems.filter((i) => !withRow.has(`${i.op}|${targetOfItem(i)}`)).length;
   const unknown =
     rows.filter((r) => r.state === "unknown").length + (exec.status === "complete" ? 0 : missing);
   // Ids are unique within a plan (R0.3), so op + target picks out exactly the item that failed.
-  const items = original.items.filter((i) => failed.has(`${i.op}|${targetOfItem(i)}`));
+  const items = planItems.filter((i) => failed.has(`${i.op}|${targetOfItem(i)}`));
   if (items.length === 0) {
     return {
       ok: false,

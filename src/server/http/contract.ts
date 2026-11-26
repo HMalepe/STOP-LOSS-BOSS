@@ -274,6 +274,8 @@ export const OPERATIONS: readonly Op[] = [
       "ACCOUNT_MODE_MISMATCH",
       "PRICE_MOVED",
       "PRICE_STALE",
+      "SPREAD_TOO_WIDE",
+      "MARGIN_CHANGED",
       "BROKER_UNAVAILABLE",
     ],
   },

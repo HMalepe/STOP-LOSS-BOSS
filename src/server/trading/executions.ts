@@ -16,6 +16,15 @@ import type { Clock } from "@/domain/clock";
 import { formatPrice, fromPoints, toPoints } from "@/domain/price";
 import { decideModify, marketFrom, quoteProblems } from "@/domain/rules";
 import type { PlanItem, Skipped } from "@/domain/types";
+import type { EntryItem } from "@/domain/entries";
+import type { LadderItem } from "@/domain/ladder";
+import { entryDrift } from "@/domain/entryDrift";
+import { batchTags } from "@/domain/batch";
+import { spreadVerdict } from "@/domain/spreadGuard";
+import type { PendingExpiry } from "@/broker/BrokerProvider";
+import type { ExecItem } from "@/execution/types";
+import { loadEntryContext } from "./entryPlans";
+import { SpreadSampler } from "./spread";
 import type { ExecutionStore } from "@/execution/idempotency";
 import type { JobRunner } from "@/execution/jobRunner";
 import type { ExecEvent, ItemResult, Progress, Summary } from "@/execution/types";
@@ -24,7 +33,7 @@ import { sha256 } from "../auth/crypto";
 import type { Db } from "../db/sql";
 import { killSwitchState, tradingGate, type TradingAction } from "../killSwitch";
 import { tradingModeGate } from "../tradingMode";
-import { itemsHash, MAX_QUOTE_AGE_MS, type StoredPlan } from "./plans";
+import { isPlanItem, itemsHash, MAX_QUOTE_AGE_MS, type StoredPlan } from "./plans";
 import type { TradingServices } from "./services";
 
 /** Non-negotiable 7 in the database: flipping the plan and inserting its execution happen together, once. */
@@ -93,7 +102,10 @@ export async function recoverInterrupted(
 
 export type ExecuteRefusal =
   | { readonly code: "PLAN_ALREADY_EXECUTED"; readonly message: string; readonly executionId: string | null }
-  | { readonly code: "PLAN_EXPIRED" | "PRICE_STALE" | "INTERNAL"; readonly message: string }
+  | {
+      readonly code: "PLAN_EXPIRED" | "PRICE_STALE" | "SPREAD_TOO_WIDE" | "MARGIN_CHANGED" | "INTERNAL";
+      readonly message: string;
+    }
   | { readonly code: "TRADING_HALTED"; readonly message: string }
   | { readonly code: "LIVE_NOT_ENABLED" | "ACCOUNT_MODE_MISMATCH"; readonly message: string }
   | { readonly code: "PRICE_MOVED"; readonly message: string; readonly details: readonly Skipped[] };
@@ -150,8 +162,9 @@ export async function driftGuard(
   svc: TradingServices,
   plan: StoredPlan,
 ): Promise<{ ok: true; run: PlanItem[]; skipped: Skipped[] } | { ok: false; refusal: ExecuteRefusal }> {
-  const modifies = plan.items.filter((i): i is Modify => i.op === "modify");
-  if (modifies.length === 0) return { ok: true, run: [...plan.items], skipped: [] };
+  const planItems = plan.items.filter(isPlanItem);
+  const modifies = planItems.filter((i): i is Modify => i.op === "modify");
+  if (modifies.length === 0) return { ok: true, run: planItems, skipped: [] };
   const symbol = plan.summary.symbol;
   // The broker may have widened stops/freeze levels since the preview (news): never check against a cached spec here.
   svc.specs.invalidate(symbol);
@@ -179,7 +192,7 @@ export async function driftGuard(
 
   const skipped: Skipped[] = [];
   const moved: Skipped[] = [];
-  const run = plan.items.filter((item) => {
+  const run = planItems.filter((item) => {
     if (item.op !== "modify") return true;
     const pos = byId.get(item.positionId);
     if (pos === undefined) return true; // closed meanwhile: reported per item
@@ -226,6 +239,93 @@ export async function driftGuard(
   return { ok: true, run, skipped };
 }
 
+/**
+ * R9.7 + §7 for ENTRIES. After the kill switch / mode gates and the hash check, and BEFORE the first broker call:
+ * quote age (R7.2) → spread guard (R9.4) → the stored levels against the live market (entry drift) → free margin vs what the preview needed.
+ * Then every order is tagged with its batch identity (R9.1) and handed to the executor.
+ */
+export async function entryRun(
+  svc: TradingServices,
+  plan: StoredPlan,
+): Promise<{ ok: true; run: ExecItem[]; skipped: Skipped[] } | { ok: false; refusal: ExecuteRefusal }> {
+  const refuse = (refusal: ExecuteRefusal) => ({ ok: false as const, refusal });
+  const entry = plan.summary.entry;
+  const items = plan.items.filter(
+    (i): i is EntryItem | LadderItem => i.op === "market" || i.op === "pending",
+  );
+  const batchSeq = entry?.batchSeq;
+  if (entry === undefined || batchSeq === undefined || items.length !== plan.items.length) {
+    return refuse({
+      code: "INTERNAL",
+      message: "This entry plan is missing its batch details. Nothing was sent.",
+    });
+  }
+  const symbol = plan.summary.symbol;
+  svc.specs.invalidate(symbol);
+  const ctx = await loadEntryContext(svc, symbol);
+  const now = svc.clock.now();
+  if (now - ctx.quote.time > MAX_QUOTE_AGE_MS) {
+    return refuse({
+      code: "PRICE_STALE",
+      message: "The last price is too old to check against. Nothing was sent.",
+    });
+  }
+  if (quoteProblems(ctx.quote).length > 0) {
+    throw new BrokerError("BAD_DATA", `unusable quote for ${symbol}: ${quoteProblems(ctx.quote).join(", ")}`);
+  }
+  // R9.4: at EXECUTE time, from this very quote.
+  const sv = spreadVerdict(
+    SpreadSampler.points(ctx.quote, ctx.spec),
+    svc.entry.sampler.samples(symbol, now),
+    svc.entry.spread,
+  );
+  if (!sv.ok) return refuse({ code: "SPREAD_TOO_WIDE", message: `${sv.message} Nothing was sent.` });
+  // §7: every stored level must still be valid against the live market, or the WHOLE plan is refused.
+  const drift = entryDrift(items, marketFrom(ctx.spec, ctx.quote));
+  if (drift.length > 0) {
+    return refuse({
+      code: "PRICE_MOVED",
+      message: "Price moved: some orders are no longer valid. Nothing was sent. Preview again.",
+      details: drift,
+    });
+  }
+  // R9.7: free margin must still cover what the preview needed.
+  if (ctx.account.freeMargin < entry.margin.required) {
+    return refuse({
+      code: "MARGIN_CHANGED",
+      message: `Free margin is now ${ctx.account.freeMargin.toFixed(2)}, below the ${entry.margin.required.toFixed(2)} this batch needs. Nothing was sent. Preview again.`,
+    });
+  }
+  const expiry: PendingExpiry | undefined =
+    entry.expiry === undefined
+      ? undefined
+      : entry.expiry.type === "SPECIFIED"
+        ? { type: "SPECIFIED", time: entry.expiry.time ?? "" }
+        : { type: entry.expiry.type };
+  const run: ExecItem[] = items.map((i) => {
+    const tags = batchTags(svc.entry.magicPrefix, batchSeq, i.index);
+    return i.op === "market"
+      ? {
+          op: "market",
+          req: { symbol: i.symbol, side: i.side, volume: i.volume, sl: i.sl, tp: i.tp, ...tags },
+        }
+      : {
+          op: "pending",
+          req: {
+            symbol: i.symbol,
+            type: i.type,
+            volume: i.volume,
+            openPrice: i.price,
+            sl: i.sl,
+            tp: i.tp,
+            ...tags,
+            ...(expiry === undefined ? {} : { expiry }),
+          },
+        };
+  });
+  return { ok: true, run, skipped: [] };
+}
+
 /** Writes the audit row for a finished run (same transaction as its summary). */
 export type RecordComplete = (tx: Db, entry: AuditEntry) => Promise<unknown>;
 
@@ -262,8 +362,10 @@ export async function startExecution(
       message: "The stored plan doesn't match its preview. Nothing was sent.",
     };
   }
-  const drift = await driftGuard(svc, plan);
+  const isEntry = plan.summary.action === "market" || plan.summary.action === "ladder";
+  const drift = isEntry ? await entryRun(svc, plan) : await driftGuard(svc, plan);
   if (!drift.ok) return { ok: false, ...drift.refusal };
+  const { skipped } = drift;
 
   let started;
   try {
@@ -275,9 +377,9 @@ export async function startExecution(
     throw e;
   }
   if (!started.ok) return already();
-  await noteSkipped(db, started.executionId, drift.skipped);
+  await noteSkipped(db, started.executionId, skipped);
   void persistResults(svc.runner, db, started.executionId, record);
-  return { ok: true, executionId: started.executionId, skipped: drift.skipped, count: drift.run.length };
+  return { ok: true, executionId: started.executionId, skipped, count: drift.run.length };
 }
 
 /**

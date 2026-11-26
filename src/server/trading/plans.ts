@@ -6,6 +6,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { EntryItem } from "@/domain/entries";
+import type { LadderItem } from "@/domain/ladder";
 import { buildPlan, type PlanDraft, type PlanError, type PlanRequest } from "@/domain/plan";
 import type { PlanItem, Position, Skipped } from "@/domain/types";
 import { canonical } from "../audit/audit";
@@ -224,11 +226,16 @@ export async function storePlan(
   return summary;
 }
 
+/** Everything a stored plan can hold: changes to positions (modify/close/cancel) or new entries (market/pending). */
+export type StoredItem = PlanItem | EntryItem | LadderItem;
+export const isPlanItem = (i: StoredItem): i is PlanItem =>
+  i.op === "modify" || i.op === "close" || i.op === "cancel";
+
 export interface StoredPlan {
   readonly id: string;
   readonly status: "created" | "executing" | "executed" | "expired";
   readonly summary: PlanSummary;
-  readonly items: readonly PlanItem[];
+  readonly items: readonly StoredItem[];
   readonly inputHash: string;
   readonly expiresAt: number;
 }
@@ -239,7 +246,7 @@ export async function loadPlan(db: Db, userId: string, id: string): Promise<Stor
     id: string;
     status: StoredPlan["status"];
     summary: PlanSummary;
-    items: PlanItem[];
+    items: StoredItem[];
     input_hash: string;
     expires_at: Date | string;
   }>("select id, status, summary, items, input_hash, expires_at from plans where id = $1 and user_id = $2", [

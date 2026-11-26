@@ -40,6 +40,8 @@
                   "PLAN_ALREADY_EXECUTED",
                   "PRICE_MOVED",
                   "PRICE_STALE",
+                  "SPREAD_TOO_WIDE",
+                  "MARGIN_CHANGED",
                   "TRADING_HALTED",
                   "LIVE_NOT_ENABLED",
                   "ACCOUNT_MODE_MISMATCH",
@@ -1749,7 +1751,7 @@
             }
           },
           "409": {
-            "description": "PLAN_EXPIRED | PLAN_ALREADY_EXECUTED | PRICE_MOVED | PRICE_STALE",
+            "description": "PLAN_EXPIRED | PLAN_ALREADY_EXECUTED | PRICE_MOVED | PRICE_STALE | SPREAD_TOO_WIDE | MARGIN_CHANGED",
             "content": {
               "application/json": {
                 "schema": {
